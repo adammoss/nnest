@@ -1,0 +1,10 @@
+*.pyc
+__pycache__/ 
+*~
+nohup.out
+.DS_Store
+*.out
+.idea/*
+logs/*
+logs_*/*
+plots/*

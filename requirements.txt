@@ -1,0 +1,12 @@
+tensorflow
+tensorboardX
+getdist
+numpy
+scipy
+matplotlib
+pandas
+torch
+tqdm
+scikit-learn
+pillow
+mpi4py
