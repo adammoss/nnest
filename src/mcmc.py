@@ -63,6 +63,8 @@ class MCMCSampler(Sampler):
         return mc
 
     def _read_samples(self, fileroot):
+        names = ['p%i' % i for i in range(int(self.x_dim))]
+        labels = [r'x_%i' % i for i in range(int(self.x_dim))]
         files = chainFiles(fileroot)
         mc = MCSamples(fileroot, names=names, labels=labels, ignore_rows=0.3)
         mc.readChains(files)

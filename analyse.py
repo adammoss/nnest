@@ -57,9 +57,9 @@ def main(args):
                 g.export(os.path.join(os.path.join(fileroot, 'plots', 'triangle.png')))
 
     if len(logzs) > 1:
-        print(r'$%4.2f \pm %4.2f$' % (np.mean(logzs), np.std(logzs)))
-        print(r'$%4.2f \pm %4.2f$' % (np.mean(dlogzs), np.std(dlogzs)))
-        print(r'$%.0f \pm %.0f$' % (np.mean(nlikes), np.std(nlikes)))
+        print(r'Log Z: $%4.2f \pm %4.2f$' % (np.mean(logzs), np.std(logzs)))
+        print(r'Log Z error estimate: $%4.2f \pm %4.2f$' % (np.mean(dlogzs), np.std(dlogzs)))
+        print(r'N_like: $%.0f \pm %.0f$' % (np.mean(nlikes), np.std(nlikes)))
 
 
 if __name__ == '__main__':
