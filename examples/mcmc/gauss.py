@@ -14,7 +14,10 @@ def main(args):
     from src.mcmc import MCMCSampler
 
     def loglike(x):
-        return np.expand_dims(multivariate_normal.logpdf(x, mean=np.zeros(args.x_dim), cov=np.eye(args.x_dim) + args.corr * (1 - np.eye(args.x_dim))), 0)
+        logl = multivariate_normal.logpdf(x, mean=np.zeros(args.x_dim), cov=np.eye(args.x_dim) + args.corr * (1 - np.eye(args.x_dim)))
+        if len(logl.shape) == 0:
+            logl = np.expand_dims(logl, 0)
+        return logl
 
     def transform(x):
         return 3. * x
@@ -34,7 +37,7 @@ if __name__ == '__main__':
     parser.add_argument("--mcmc_steps", type=int, default=10000)
     parser.add_argument('--load_model', type=str, default='')
     parser.add_argument('--dim', type=int, default=128)
-    parser.add_argument('--num_layers', type=int, default=2)
+    parser.add_argument('--num_layers', type=int, default=1)
     parser.add_argument('--batch_size', type=int, default=100)
     parser.add_argument('-use_gpu', action='store_true')
     parser.add_argument('--flow', type=str, default='nvp')
