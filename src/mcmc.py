@@ -99,8 +99,8 @@ class MCMCSampler(Sampler):
 
             print(mc.getMargeStats())
             samples = mc.makeSingleSamples(single_thin=10)
-            mean = np.min(samples, axis=0)
-            std = np.max(samples, axis=0)
+            mean = np.mean(samples, axis=0)
+            std = np.std(samples, axis=0)
             samples = (samples - mean) / std
             self.trainer.train(samples, max_iters=train_iters, noise=0.01)
 
@@ -109,7 +109,7 @@ class MCMCSampler(Sampler):
 
         samples, likes, latent, scale, nc = self.trainer.sample(
             loglike=self.loglike, transform=transform,
-            mcmc_steps=mcmc_steps, alpha=scale, dynamic=False, show_progress=True,
+            mcmc_steps=mcmc_steps, alpha=1.0, dynamic=False, show_progress=True,
             out_chain=os.path.join(self.logs['chains'], 'chain'))
         samples = transform(samples)
         self._chain_stats(samples)
