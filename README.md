@@ -1,6 +1,8 @@
 # NNest
 
-Neural network accelerated nested and MCMC sampling. 
+Neural network accelerated nested and MCMC sampling. The target distribution is first transformed into a diagonal, unit variance Gaussian by a series of non-linear, invertible, and non-volume preserving flows. Efficient MCMC proposals can then be made in this simpler latent space.
+
+![latent](https://github.com/adammoss/nnest/blob/master/rosenbock.png)
 
 ### Nested Sampling
 
@@ -22,3 +24,7 @@ Runs can be analysed by e.g.
 python analyse.py --name rosenbrock --x_dim 2 -plot
 python analyse.py --name rosenbrock_mcmc --x_dim 2 --sampler mcmc -plot
 ```
+### Attribution
+
+Please cite [Moss (2019)](https://arxiv.org/abs/1903.10860) if you find the 
+package useful in your research.
