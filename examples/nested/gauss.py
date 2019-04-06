@@ -13,10 +13,7 @@ def main(args):
     from src.nested import NestedSampler
 
     def loglike(x):
-        logl = multivariate_normal.logpdf(x, mean=np.zeros(args.x_dim), cov=np.eye(args.x_dim) + args.corr * (1 - np.eye(args.x_dim)))
-        if len(logl.shape) == 0:
-            logl = np.expand_dims(logl, 0)
-        return logl
+        return multivariate_normal.logpdf(x, mean=np.zeros(args.x_dim), cov=np.eye(args.x_dim) + args.corr * (1 - np.eye(args.x_dim)))
 
     def transform(x):
         return 3. * x

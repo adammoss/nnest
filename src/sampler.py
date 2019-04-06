@@ -13,7 +13,7 @@ import json
 import numpy as np
 
 from src.trainer import Trainer
-from src.utils.logger import save_ess, create_logger, make_run_dir
+from src.utils.logger import create_logger, make_run_dir
 from src.utils.evaluation import acceptance_rate, effective_sample_size, mean_jump_distance
 
 
@@ -25,7 +25,13 @@ class Sampler(object):
                  transform=None,
                  name='test'):
 
-        self.loglike = loglike
+        def safe_loglike(x):
+            logl = loglike(x)
+            if len(logl.shape) == 0:
+                logl = np.expand_dims(logl, 0)
+            return logl
+
+        self.loglike = safe_loglike
         self.x_dim = args.x_dim
         
         if transform is None:
