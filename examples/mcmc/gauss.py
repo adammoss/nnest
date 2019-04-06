@@ -1,7 +1,6 @@
 import os
 import sys
 import argparse
-import math
 
 import numpy as np
 from scipy.stats import multivariate_normal
