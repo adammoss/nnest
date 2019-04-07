@@ -25,15 +25,19 @@ class Sampler(object):
                  transform=None,
                  name='test'):
 
+        self.x_dim = args.x_dim
+
         def safe_loglike(x):
+            if len(x.shape) == 1:
+                assert x.shape[0] == self.x_dim
+                x = np.expand_dims(x, 0)
             logl = loglike(x)
             if len(logl.shape) == 0:
                 logl = np.expand_dims(logl, 0)
             return logl
 
         self.loglike = safe_loglike
-        self.x_dim = args.x_dim
-        
+
         if transform is None:
             self.transform = lambda x: x
         else:

@@ -248,7 +248,7 @@ class Trainer(object):
                     if im:
                         if not fast:
                             ncall += 1
-                        lp = loglike(transform(np.expand_dims(x_prime[idx], 0)))
+                        lp = loglike(transform(x_prime[idx]))
                         if loglstar is not None:
                             if np.isfinite(lp) and lp >= loglstar:
                                 logl_prime[idx] = lp
@@ -392,7 +392,7 @@ class Trainer(object):
             ax[0].scatter(dataset[:, 0], dataset[:, 1], c=dataset[:, 0], s=2)
             ax[0].set_title('Real data')
             ax[1].scatter(x_synth[:, 0], x_synth[:, 1], s=2)
-            ax[1].set_title('Synth data')
+            ax[1].set_title('Synthetic data')
             ax[2].scatter(z[:, 0], z[:, 1], c=dataset[:, 0], s=2)
             ax[2].set_title('Latent data')
             plt.tight_layout()

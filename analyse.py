@@ -30,18 +30,19 @@ def main(args):
             if args.x_dim != 0 and int(data['x_dim']) != args.x_dim:
                 continue
 
+            print(fileroot)
+
             if args.sampler == 'nested':
                 if args.npoints != 0 and int(data['npoints']) != args.npoints:
                     continue
                 if os.path.exists(os.path.join(fileroot, 'results', 'final.csv')):
                     results = pd.read_csv(os.path.join(fileroot, 'results', 'final.csv'))
-                    print(fileroot)
                     print(results)
                     logzs.append(results['logz'])
                     dlogzs.append(results['logzerr'])
                     nlikes.append(results['ncall'])
 
-            if args.plot and os.path.exists(os.path.join(fileroot, 'chains', 'chain.txt')):
+            if os.path.exists(os.path.join(fileroot, 'chains', 'chain.txt')):
                 names = ['p%i' % i for i in range(int(data['x_dim']))]
                 labels = [r'x_%i' % i for i in range(int(data['x_dim']))]
                 files = getdist.chains.chainFiles(os.path.join(fileroot, 'chains', 'chain.txt'))
@@ -52,9 +53,11 @@ def main(args):
                     mc = getdist.MCSamples(os.path.join(fileroot, 'chains', 'chain.txt'), names=names, labels=labels)
                 mc.readChains(files)
                 print(mc.getMargeStats())
-                g = getdist.plots.getSubplotPlotter()
-                g.triangle_plot(mc, filled=True)
-                g.export(os.path.join(os.path.join(fileroot, 'plots', 'triangle.png')))
+
+                if args.plot:
+                    g = getdist.plots.getSubplotPlotter()
+                    g.triangle_plot(mc, filled=True)
+                    g.export(os.path.join(os.path.join(fileroot, 'plots', 'triangle.png')))
 
     if len(logzs) > 1:
         print(r'Log Z: $%4.2f \pm %4.2f$' % (np.mean(logzs), np.std(logzs)))

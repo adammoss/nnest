@@ -39,7 +39,7 @@ class MCMCSampler(Sampler):
             logl_prime = np.full(mcmc_batch_size, logl)
             for idx, im in enumerate(mask):
                 if im:
-                    lp = self.loglike(self.transform(np.expand_dims(u_prime[idx], 0)))
+                    lp = self.loglike(self.transform(u_prime[idx]))
                     if np.isfinite(lp) and rnd_u[idx] < np.clip(np.exp(lp - logl[idx]), 0, 1):
                         logl_prime[idx] = lp
                     else:
@@ -86,8 +86,6 @@ class MCMCSampler(Sampler):
                 else:
                     mc = self._init_samples()
             else:
-                def transform(x):
-                    return x * std + mean
                 samples, likes, latent, scale, nc = self.trainer.sample(
                     loglike=self.loglike, transform=transform,
                     mcmc_steps=bootstrap_mcmc_steps, alpha=1.0, dynamic=False, show_progress=True)
@@ -97,15 +95,14 @@ class MCMCSampler(Sampler):
                 weights = np.ones(loglikes.shape)
                 mc = MCSamples(samples=[samples[0]], weights=[weights[0]], loglikes=[loglikes[0]], ignore_rows=0.3)
 
-            print(mc.getMargeStats())
             samples = mc.makeSingleSamples(single_thin=10)
             mean = np.mean(samples, axis=0)
             std = np.std(samples, axis=0)
             samples = (samples - mean) / std
             self.trainer.train(samples, max_iters=train_iters, noise=0.01)
 
-        def transform(x):
-            return x * std + mean
+            def transform(x):
+                return x * std + mean
 
         samples, likes, latent, scale, nc = self.trainer.sample(
             loglike=self.loglike, transform=transform,
@@ -113,7 +110,3 @@ class MCMCSampler(Sampler):
             out_chain=os.path.join(self.logs['chains'], 'chain'))
         samples = transform(samples)
         self._chain_stats(samples)
-        loglikes = -np.array(likes)
-        weights = np.ones(loglikes.shape)
-        mc = MCSamples(samples=[samples[0]], weights=[weights[0]], loglikes=[loglikes[0]], ignore_rows=0.3)
-        print(mc.getMargeStats())
