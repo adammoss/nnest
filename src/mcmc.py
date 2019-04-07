@@ -40,7 +40,7 @@ class MCMCSampler(Sampler):
             for idx, im in enumerate(mask):
                 if im:
                     lp = self.loglike(self.transform(u_prime[idx]))
-                    if np.isfinite(lp) and rnd_u[idx] < np.clip(np.exp(lp - logl[idx]), 0, 1):
+                    if rnd_u[idx] < np.clip(np.exp(lp - logl[idx]), 0, 1):
                         logl_prime[idx] = lp
                     else:
                         mask[idx] = 0

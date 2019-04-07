@@ -34,6 +34,7 @@ class Sampler(object):
             logl = loglike(x)
             if len(logl.shape) == 0:
                 logl = np.expand_dims(logl, 0)
+            logl[np.logical_not(np.isfinite(logl))] = -1e100
             return logl
 
         self.loglike = safe_loglike
