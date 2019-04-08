@@ -13,8 +13,7 @@ import getdist.plots
 
 
 def main(args):
-
-    root = os.path.join(args.path, args.name, 'run*')
+    root = os.path.join(args.log_dir, 'run*')
 
     logzs = []
     dlogzs = []
@@ -32,7 +31,7 @@ def main(args):
 
             print(fileroot)
 
-            if args.sampler == 'nested':
+            if data['sampler'] == 'nested':
                 if os.path.exists(os.path.join(fileroot, 'results', 'final.csv')):
                     results = pd.read_csv(os.path.join(fileroot, 'results', 'final.csv'))
                     print(results)
@@ -44,7 +43,7 @@ def main(args):
                 names = ['p%i' % i for i in range(int(data['x_dim']))]
                 labels = [r'x_%i' % i for i in range(int(data['x_dim']))]
                 files = getdist.chains.chainFiles(os.path.join(fileroot, 'chains', 'chain.txt'))
-                if args.sampler == 'nested':
+                if data['sampler'] == 'nested':
                     mc = getdist.MCSamples(os.path.join(fileroot, 'chains', 'chain.txt'), names=names, labels=labels,
                                            ignore_rows=0.0, sampler='nested')
                 else:
@@ -64,14 +63,11 @@ def main(args):
 
 
 if __name__ == '__main__':
-
     parser = argparse.ArgumentParser()
 
-    parser.add_argument('--path', type=str, default='logs')
-    parser.add_argument('--name', type=str, default='rosenbrock')
+    parser.add_argument('--log_dir', type=str, default='logs/rosenbrock')
     parser.add_argument('--x_dim', type=int, default=0)
     parser.add_argument('-plot', action='store_true')
-    parser.add_argument('--sampler', type=str, default='nested')
 
     args = parser.parse_args()
     main(args)

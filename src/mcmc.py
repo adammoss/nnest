@@ -19,6 +19,26 @@ from src.sampler import Sampler
 
 class MCMCSampler(Sampler):
 
+    def __init__(self,
+                 x_dim,
+                 loglike,
+                 transform=None,
+                 append_run_num=True,
+                 run_num=None,
+                 h_dim=128,
+                 nslow=0,
+                 batch_size=100,
+                 flow='nvp',
+                 num_blocks=5,
+                 num_layers=2,
+                 log_dir='logs/test'):
+
+        self.sampler = 'mcmc'
+
+        super(MCMCSampler, self).__init__(x_dim, loglike, transform=transform, append_run_num=append_run_num,
+                                          run_num=run_num, h_dim=h_dim, nslow=nslow, batch_size=batch_size, flow=flow,
+                                          num_blocks=num_blocks, num_layers=num_layers, log_dir=log_dir)
+
     def _init_samples(self, mcmc_steps=5000, mcmc_batch_size=5):
         u = 2 * (np.random.uniform(size=(mcmc_batch_size, self.x_dim)) - 0.5)
         v = self.transform(u)
