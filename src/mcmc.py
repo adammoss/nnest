@@ -119,7 +119,7 @@ class MCMCSampler(Sampler):
             mean = np.mean(samples, axis=0)
             std = np.std(samples, axis=0)
             samples = (samples - mean) / std
-            self.trainer.train(samples, max_iters=train_iters, noise=0.01)
+            self.trainer.train(samples, max_iters=train_iters, noise=-1)
 
             def transform(x):
                 return x * std + mean

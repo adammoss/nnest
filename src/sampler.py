@@ -87,7 +87,8 @@ class Sampler(object):
                 flow=flow,
                 num_blocks=num_blocks,
                 num_layers=num_layers,
-                log_dir=log_dir)
+                log_dir=log_dir,
+                log=self.log)
 
     def _save_params(self, my_dict):
         my_dict = {k: str(v) for k, v in my_dict.items()}

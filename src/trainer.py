@@ -15,6 +15,7 @@ from torch.utils.data import DataLoader
 import numpy as np
 from tensorboardX import SummaryWriter
 from sklearn.model_selection import train_test_split
+import scipy.spatial
 from tqdm import tqdm
 
 import matplotlib
@@ -23,6 +24,7 @@ matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 
 from src.networks import SingleSpeed, FastSlow, BatchNormFlow
+from src.utils.logger import create_logger
 
 
 class Trainer(object):
@@ -39,7 +41,8 @@ class Trainer(object):
                  train=True,
                  load_model='',
                  log_dir='logs',
-                 use_gpu=False
+                 use_gpu=False,
+                 log=True
                  ):
 
         self.device = torch.device(
@@ -94,6 +97,9 @@ class Trainer(object):
             print(self.netG)
             self.writer = SummaryWriter(self.path)
 
+        self.logger = create_logger(__name__)
+        self.log = log
+
     def train(
             self,
             samples,
@@ -112,6 +118,16 @@ class Trainer(object):
             np.save(
                 os.path.join(self.path, 'data', 'originals.npy'),
                 samples)
+
+        if noise < 0:
+            kdt = scipy.spatial.cKDTree(samples)
+            dists, neighs = kdt.query(samples, 2)
+            training_noise = .2 * np.mean(dists)
+        else:
+            training_noise = noise
+
+        if self.log:
+            self.logger.info('Training noise [%5.4f]' % training_noise)
 
         X_train, X_valid = train_test_split(
             samples, test_size=validation_fraction)
@@ -135,7 +151,7 @@ class Trainer(object):
             self.total_iters += 1
 
             train_loss = self._train(
-                epoch, self.netG, train_loader, noise=noise)
+                epoch, self.netG, train_loader, noise=training_noise)
             validation_loss = self._validate(epoch, self.netG, valid_loader)
 
             if validation_loss < best_validation_loss:

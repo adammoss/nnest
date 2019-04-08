@@ -13,7 +13,6 @@ import os
 import csv
 
 import numpy as np
-import scipy.spatial
 
 from src.sampler import Sampler
 
@@ -192,16 +191,7 @@ class NestedSampler(Sampler):
 
                 # MCMC
                 if first_time or it % update_interval == 0:
-                    if noise < 0:
-                        kdt = scipy.spatial.cKDTree(active_u)
-                        dists, neighs = kdt.query(active_u, 2)
-                        training_noise = .2 * np.mean(dists)
-                    else:
-                        training_noise = noise
-                    # Train the flow
-                    if self.log:
-                        self.logger.info('Training noise [%5.4f]' % training_noise)
-                    self.trainer.train(active_u, max_iters=train_iters, noise=training_noise)
+                    self.trainer.train(active_u, max_iters=train_iters, noise=noise)
                     if num_test_samples > 0:
                         # Test multiple chains from worst point to check mixing
                         init_x = np.concatenate(
