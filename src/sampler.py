@@ -67,12 +67,10 @@ class Sampler(object):
 
         self.log = not self.use_mpi or (self.use_mpi and self.mpi_rank == 0)
 
-        args = {}
-
         if self.log:
             self.logs = make_run_dir(log_dir, run_num, append_run_num= append_run_num)
             log_dir = self.logs['run_dir']
-            self._save_params(args)
+            self._save_params(locals())
         else:
             log_dir = None
                 

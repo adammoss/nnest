@@ -33,8 +33,6 @@ def main(args):
             print(fileroot)
 
             if args.sampler == 'nested':
-                if args.npoints != 0 and int(data['npoints']) != args.npoints:
-                    continue
                 if os.path.exists(os.path.join(fileroot, 'results', 'final.csv')):
                     results = pd.read_csv(os.path.join(fileroot, 'results', 'final.csv'))
                     print(results)
@@ -72,7 +70,6 @@ if __name__ == '__main__':
     parser.add_argument('--path', type=str, default='logs')
     parser.add_argument('--name', type=str, default='rosenbrock')
     parser.add_argument('--x_dim', type=int, default=0)
-    parser.add_argument('--npoints', type=int, default=0)
     parser.add_argument('-plot', action='store_true')
     parser.add_argument('--sampler', type=str, default='nested')
 
