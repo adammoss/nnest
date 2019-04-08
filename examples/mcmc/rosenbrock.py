@@ -8,23 +8,22 @@ sys.path.append(os.getcwd())
 
 
 def main(args):
-
     from src.mcmc import MCMCSampler
 
     os.environ['CUDA_VISIBLE_DEVICES'] = ''
 
     def loglike(z):
-        return np.array([-sum(100.0*(x[1:]-x[:-1]**2.0)**2.0 + (1-x[:-1])**2.0) for x in z])
+        return np.array([-sum(100.0 * (x[1:] - x[:-1] ** 2.0) ** 2.0 + (1 - x[:-1]) ** 2.0) for x in z])
 
     def transform(x):
         return 5. * x
 
-    sampler = MCMCSampler(loglike, args,  name='rosenbrock_mcmc', transform=transform)
+    sampler = MCMCSampler(args.x_dim, loglike, transform=transform, log_dir=args.log_dir, h_dim=args.dim,
+                          num_layers=args.num_layers, num_blocks=args.num_blocks, nslow=args.nslow)
     sampler.run(train_iters=args.train_iters, mcmc_steps=args.mcmc_steps)
 
 
 if __name__ == '__main__':
-
     parser = argparse.ArgumentParser()
 
     parser.add_argument('--x_dim', type=int, default=2,
@@ -32,7 +31,6 @@ if __name__ == '__main__':
     parser.add_argument('--train_iters', type=int, default=100,
                         help="number of train iters")
     parser.add_argument("--mcmc_steps", type=int, default=10000)
-    parser.add_argument('--load_model', type=str, default='')
     parser.add_argument('--dim', type=int, default=128)
     parser.add_argument('--num_layers', type=int, default=1)
     parser.add_argument('--batch_size', type=int, default=100)
@@ -42,6 +40,7 @@ if __name__ == '__main__':
     parser.add_argument('--noise', type=float, default=-1)
     parser.add_argument('--run_num', type=str, default='')
     parser.add_argument('--nslow', type=int, default=0)
+    parser.add_argument('--log_dir', type=str, default='logs/rosenbrock_mcmc')
 
     args = parser.parse_args()
     main(args)

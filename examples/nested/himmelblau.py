@@ -19,9 +19,10 @@ def main(args):
     def transform(x):
         return 5. * x
 
-    sampler = NestedSampler(loglike, args,  name='himmelblau', transform=transform)
-    sampler.run(train_iters=args.train_iters, mcmc_steps=args.mcmc_steps, volume_switch=args.switch, noise=args.noise, num_test_samples=args.test_samples, test_mcmc_steps=args.test_mcmc_steps)
-
+    sampler = NestedSampler(args.x_dim, loglike, transform=transform, log_dir=args.log_dir, npoints=args.npoints,
+                            h_dim=args.dim, num_layers=args.num_layers, num_blocks=args.num_blocks, nslow=args.nslow)
+    sampler.run(train_iters=args.train_iters, mcmc_steps=args.mcmc_steps, volume_switch=args.switch, noise=args.noise,
+                num_test_samples=args.test_samples, test_mcmc_steps=args.test_mcmc_steps)
 
 if __name__ == '__main__':
 
@@ -34,7 +35,6 @@ if __name__ == '__main__':
     parser.add_argument("--mcmc_steps", type=int, default=0)
     parser.add_argument("--npoints", type=int, default=1000)
     parser.add_argument('--switch', type=float, default=-1)
-    parser.add_argument('--load_model', type=str, default='')
     parser.add_argument('--dim', type=int, default=128)
     parser.add_argument('--num_layers', type=int, default=2)
     parser.add_argument('--batch_size', type=int, default=100)
@@ -46,6 +46,7 @@ if __name__ == '__main__':
     parser.add_argument("--test_mcmc_steps", type=int, default=1000)
     parser.add_argument('--run_num', type=str, default='')
     parser.add_argument('--nslow', type=int, default=0)
+    parser.add_argument('--log_dir', type=str, default='logs/himmelblau')
 
     args = parser.parse_args()
     main(args)

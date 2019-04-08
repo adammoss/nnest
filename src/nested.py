@@ -20,12 +20,27 @@ from src.sampler import Sampler
 
 class NestedSampler(Sampler):
 
-    def initialise(self, args):
+    def __init__(self,
+                 x_dim,
+                 loglike,
+                 transform=None,
+                 append_run_num=True,
+                 run_num=None,
+                 h_dim=128,
+                 nslow=0,
+                 batch_size=100,
+                 flow='nvp',
+                 num_blocks=5,
+                 num_layers=2,
+                 log_dir='logs/test',
+                 npoints=1000
+                 ):
 
-        if args.npoints == -1:
-            self.npoints = 1000
-        else:
-            self.npoints = args.npoints
+        super(NestedSampler, self).__init__(x_dim, loglike, transform=transform, append_run_num=append_run_num,
+                                            run_num=run_num, h_dim=h_dim, nslow=nslow, batch_size=batch_size, flow=flow,
+                                            num_blocks=num_blocks, num_layers=num_layers, log_dir=log_dir)
+
+        self.npoints = npoints
 
         if self.log:
             self.logger.info('Num live points [%d]' % (self.npoints))

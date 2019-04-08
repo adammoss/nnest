@@ -20,12 +20,21 @@ from src.utils.evaluation import acceptance_rate, effective_sample_size, mean_ju
 class Sampler(object):
 
     def __init__(self,
+                 x_dim,
                  loglike,
-                 args,
                  transform=None,
-                 name='test'):
+                 append_run_num=True,
+                 run_num=None,
+                 h_dim=128,
+                 nslow=0,
+                 batch_size=100,
+                 flow='nvp',
+                 num_blocks=5,
+                 num_layers=2,
+                 log_dir='logs/test'
+                 ):
 
-        self.x_dim = args.x_dim
+        self.x_dim = x_dim
 
         def safe_loglike(x):
             if len(x.shape) == 1:
@@ -44,11 +53,6 @@ class Sampler(object):
         else:
             self.transform = transform
 
-        if 'run_num' in args:
-            run_num = args.run_num
-        else:
-            run_num = None
-
         self.use_mpi = False
         try:
             from mpi4py import MPI
@@ -63,32 +67,26 @@ class Sampler(object):
 
         self.log = not self.use_mpi or (self.use_mpi and self.mpi_rank == 0)
 
+        args = {}
+
         if self.log:
-            if 'log_dir' in args:
-                self.logs = make_run_dir(args.log_dir, run_num, append_run_num=False)
-            else:
-                self.logs = make_run_dir('logs/%s' % name, run_num)
+            self.logs = make_run_dir(log_dir, run_num, append_run_num= append_run_num)
             log_dir = self.logs['run_dir']
-            self._save_params(vars(args))
+            self._save_params(args)
         else:
             log_dir = None
                 
         self.logger = create_logger(__name__)
 
         self.trainer = Trainer(
-                args.x_dim,
-                args.dim,
-                nslow=args.nslow,
-                batch_size=args.batch_size,
-                flow=args.flow,
-                num_blocks=args.num_blocks,
-                num_layers=args.num_layers,
+                x_dim,
+                h_dim,
+                nslow=nslow,
+                batch_size=batch_size,
+                flow=flow,
+                num_blocks=num_blocks,
+                num_layers=num_layers,
                 log_dir=log_dir)
-
-        self.initialise(args)
-
-    def initialise(self, args):
-        pass
 
     def _save_params(self, my_dict):
         my_dict = {k: str(v) for k, v in my_dict.items()}
