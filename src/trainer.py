@@ -271,7 +271,9 @@ class Trainer(object):
                             else:
                                 mask[idx] = 0
                         else:
-                            if rnd_u[idx].cpu().numpy() < np.clip(np.exp(lp - logl[idx]), 0, 1):
+                            if lp >= logl[idx]:
+                                logl_prime[idx] = lp
+                            elif rnd_u[idx].cpu().numpy() < np.clip(np.exp(lp - logl[idx]), 0, 1):
                                 logl_prime[idx] = lp
                             else:
                                 mask[idx] = 0
