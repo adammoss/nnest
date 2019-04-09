@@ -19,10 +19,9 @@ python examples/mcmc/rosenbrock.py --x_dim 2
 ```
 ### Analysing runs
 
-Runs can be analysed by e.g.
+Runs can be analysed by
 ```
-python analyse.py --name rosenbrock --x_dim 2 -plot
-python analyse.py --name rosenbrock_mcmc --x_dim 2 --sampler mcmc -plot
+python analyse.py
 ```
 ### Attribution
 
