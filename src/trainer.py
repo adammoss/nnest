@@ -180,7 +180,7 @@ class Trainer(object):
             batch_size=1,
             loglike=None,
             init_x=None,
-            logl=-1e30,
+            logl=None,
             loglstar=None,
             transform=None,
             show_progress=False,
@@ -204,12 +204,22 @@ class Trainer(object):
         else:
             z = torch.randn(batch_size, self.z_dim, device=self.device)
 
-        if type(logl) == float:
-            logl = np.full(batch_size, logl)
-
         # Add the backward version of x rather than init_x due to numerical precision
         x, _ = self.netG(z, mode='inverse')
-        samples.append(x.detach().cpu().numpy())
+        x = x.detach().cpu().numpy()
+
+        if logl is None:
+            logl = np.full(batch_size, -1e30)
+            for ib in range(batch_size):
+                for i in range(100):
+                    lp = loglike(transform(x[ib]))
+                    if lp[0] > -1e30:
+                        logl[ib] = lp[0]
+                        break
+                    if i == 99:
+                        raise Exception('Could not find starting value')
+
+        samples.append(x)
         likes.append(logl)
 
         iters = range(mcmc_steps)
