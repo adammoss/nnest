@@ -9,6 +9,7 @@ from __future__ import print_function
 from __future__ import division
 
 import os
+import glob
 
 import numpy as np
 from getdist.mcsamples import MCSamples
@@ -41,7 +42,7 @@ class MCMCSampler(Sampler):
                                           num_derived=num_derived, batch_size=batch_size, flow=flow,
                                           num_blocks=num_blocks, num_layers=num_layers, log_dir=log_dir)
 
-    def _init_samples(self, mcmc_steps=5000, mcmc_batch_size=5):
+    def _init_samples(self, mcmc_steps=5000, mcmc_batch_size=5, ignore_rows=0.3):
         u = 2 * (np.random.uniform(size=(mcmc_batch_size, self.x_dim)) - 0.5)
         v = self.transform(u)
         logl = self.loglike(v)
@@ -82,15 +83,18 @@ class MCMCSampler(Sampler):
         names = ['p%i' % i for i in range(int(self.x_dim))]
         labels = [r'x_%i' % i for i in range(int(self.x_dim))]
         files = chainFiles(os.path.join(self.logs['chains'], 'chain'), first_chain=1, last_chain=mcmc_batch_size)
-        mc = MCSamples(self.logs['chains'], names=names, labels=labels, ignore_rows=0.3)
+        mc = MCSamples(self.logs['chains'], names=names, labels=labels, ignore_rows=ignore_rows)
         mc.readChains(files)
         return mc
 
-    def _read_samples(self, fileroot):
+    def _read_samples(self, fileroot, match='', ignore_rows=0.3):
         names = ['p%i' % i for i in range(int(self.num_params))]
         labels = [r'x_%i' % i for i in range(int(self.num_params))]
-        files = chainFiles(fileroot)
-        mc = MCSamples(fileroot, names=names, labels=labels, ignore_rows=0.3)
+        if match:
+            files = glob.glob(os.path.join(fileroot, match))
+        else:
+            files = chainFiles(fileroot)
+        mc = MCSamples(fileroot, names=names, labels=labels, ignore_rows=ignore_rows)
         mc.readChains(files)
         return mc
 
@@ -101,6 +105,7 @@ class MCMCSampler(Sampler):
             bootstrap_iters=1,
             bootstrap_mcmc_steps=5000,
             bootstrap_fileroot='',
+            bootstrap_match='',
             bootstrap_batch_size=5,
             alpha=0,
             single_thin=1,
@@ -116,9 +121,9 @@ class MCMCSampler(Sampler):
 
             if t == 0:
                 if bootstrap_fileroot:
-                    mc = self._read_samples(bootstrap_fileroot)
+                    mc = self._read_samples(bootstrap_fileroot, match=bootstrap_match, ignore_rows=ignore_rows)
                 else:
-                    mc = self._init_samples(mcmc_steps=bootstrap_mcmc_steps, mcmc_batch_size=bootstrap_batch_size)
+                    mc = self._init_samples(mcmc_steps=bootstrap_mcmc_steps, mcmc_batch_size=bootstrap_batch_size, ignore_rows=ignore_rows)
             else:
                 samples, likes, latent, scale, nc = self.trainer.sample(
                     loglike=self.loglike, transform=transform,
