@@ -123,7 +123,8 @@ class MCMCSampler(Sampler):
                 if bootstrap_fileroot:
                     mc = self._read_samples(bootstrap_fileroot, match=bootstrap_match, ignore_rows=ignore_rows)
                 else:
-                    mc = self._init_samples(mcmc_steps=bootstrap_mcmc_steps, mcmc_batch_size=bootstrap_batch_size, ignore_rows=ignore_rows)
+                    mc = self._init_samples(mcmc_steps=bootstrap_mcmc_steps, mcmc_batch_size=bootstrap_batch_size,
+                                            ignore_rows=ignore_rows)
             else:
                 samples, likes, latent, scale, nc = self.trainer.sample(
                     loglike=self.loglike, transform=transform,
@@ -132,7 +133,8 @@ class MCMCSampler(Sampler):
                 self._chain_stats(samples)
                 loglikes = -np.array(likes)
                 weights = np.ones(loglikes.shape)
-                mc = MCSamples(samples=[samples[0]], weights=[weights[0]], loglikes=[loglikes[0]], ignore_rows=ignore_rows)
+                mc = MCSamples(samples=[samples[0]], weights=[weights[0]], loglikes=[loglikes[0]],
+                               ignore_rows=ignore_rows)
 
             samples = mc.makeSingleSamples(single_thin=single_thin)
             samples = samples[:, :self.x_dim]
