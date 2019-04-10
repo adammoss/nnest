@@ -112,7 +112,7 @@ class MCMCSampler(Sampler):
             ignore_rows=0.3):
 
         if alpha == 0.0:
-            alpha = 2 / self.x_dim ** 0.5
+            alpha = 1 / self.x_dim ** 0.5
 
         if self.log:
             self.logger.info('Alpha [%5.4f]' % (alpha))

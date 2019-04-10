@@ -322,6 +322,7 @@ class Trainer(object):
                     files[ib].write("%.5E " % -logl[ib])
                     files[ib].write(" ".join(["%.5E" % vi for vi in v[ib]]))
                     files[ib].write("\n")
+                    files[ib].flush()
 
         # Transpose so shape is (chain_num, iteration, dim)
         samples = np.transpose(np.array(samples), axes=[1, 0, 2])
