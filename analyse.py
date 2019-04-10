@@ -62,7 +62,7 @@ def main(args):
 
                 if os.path.exists(os.path.join(log_dir, 'chains', 'chain.txt')):
                     names = ['p%i' % i for i in range(int(data['x_dim']))]
-                    labels = [r'x_%i' % i for i in range(int(data['x_dim']))]
+                    labels = [r'x_{%i}' % i for i in range(int(data['x_dim']))]
                     files = getdist.chains.chainFiles(os.path.join(log_dir, 'chains', 'chain.txt'))
                     if data['sampler'] == 'nested':
                         mc = getdist.MCSamples(os.path.join(log_dir, 'chains', 'chain.txt'), names=names, labels=labels,
