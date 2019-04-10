@@ -102,7 +102,9 @@ class MCMCSampler(Sampler):
             bootstrap_mcmc_steps=5000,
             bootstrap_fileroot='',
             bootstrap_batch_size=5,
-            alpha=0):
+            alpha=0,
+            single_thin=1,
+            ignore_rows=0.3):
 
         if alpha == 0.0:
             alpha = 2 / self.x_dim ** 0.5
@@ -125,9 +127,10 @@ class MCMCSampler(Sampler):
                 self._chain_stats(samples)
                 loglikes = -np.array(likes)
                 weights = np.ones(loglikes.shape)
-                mc = MCSamples(samples=[samples[0]], weights=[weights[0]], loglikes=[loglikes[0]], ignore_rows=0.3)
+                mc = MCSamples(samples=[samples[0]], weights=[weights[0]], loglikes=[loglikes[0]], ignore_rows=ignore_rows)
 
-            samples = mc.makeSingleSamples(single_thin=10)
+            samples = mc.makeSingleSamples(single_thin=single_thin)
+            samples = samples[:, :self.x_dim]
             mean = np.mean(samples, axis=0)
             std = np.std(samples, axis=0)
             samples = (samples - mean) / std
