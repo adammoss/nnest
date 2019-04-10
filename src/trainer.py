@@ -407,7 +407,7 @@ class Trainer(object):
 
         return val_loss / len(loader.dataset)
 
-    def _train_plot(self, model, dataset):
+    def _train_plot(self, model, dataset, plot_grid=True):
 
         model.eval()
         with torch.no_grad():
@@ -415,6 +415,18 @@ class Trainer(object):
             x_data = torch.from_numpy(dataset).float()
             z, _ = model(x_data)
             z = z.detach().cpu().numpy()
+            if plot_grid:
+                grid = []
+                for x in np.linspace(np.min(dataset[:, 0]), np.max(dataset[:, 0]), 10):
+                    for y in np.linspace(np.min(dataset[:, 1]), np.max(dataset[:, 1]), 5000):
+                        grid.append([x, y])
+                for y in np.linspace(np.min(dataset[:, 1]), np.max(dataset[:, 1]), 10):
+                    for x in np.linspace(np.min(dataset[:, 0]), np.max(dataset[:, 0]), 5000):
+                        grid.append([x, y])
+                grid = np.array(grid)
+                x_grid = torch.from_numpy(grid).float()
+                z_grid, _ = model(x_grid)
+                z_grid = z_grid.detach().cpu().numpy()
 
         if self.writer is not None:
             fig, ax = plt.subplots(2, figsize=(5, 10))
@@ -423,13 +435,19 @@ class Trainer(object):
             self.writer.add_figure('latent', fig, self.total_iters)
 
         if self.path:
-            fig, ax = plt.subplots(1, 3, figsize=(10, 5))
-            ax[0].scatter(dataset[:, 0], dataset[:, 1], c=dataset[:, 0], s=2)
+            fig, ax = plt.subplots(1, 3, figsize=(10, 4))
+            if plot_grid:
+                ax[0].scatter(grid[:, 0], grid[:, 1], c=grid[:, 0], marker='.', s=1, linewidths=0)
+            ax[0].scatter(dataset[:, 0], dataset[:, 1], s=4)
             ax[0].set_title('Real data')
-            ax[1].scatter(x_synth[:, 0], x_synth[:, 1], s=2)
-            ax[1].set_title('Synthetic data')
-            ax[2].scatter(z[:, 0], z[:, 1], c=dataset[:, 0], s=2)
-            ax[2].set_title('Latent data')
+            if plot_grid:
+                ax[1].scatter(z_grid[:, 0], z_grid[:, 1], c=grid[:, 0], marker='.', s=1, linewidths=0)
+            ax[1].scatter(z[:, 0], z[:, 1], s=4)
+            ax[1].set_title('Latent data')
+            ax[1].set_xlim([-3, 3])
+            ax[1].set_ylim([-3, 3])
+            ax[2].scatter(x_synth[:, 0], x_synth[:, 1], s=2)
+            ax[2].set_title('Synthetic data')
             plt.tight_layout()
             plt.savefig(os.path.join(self.path, 'plots', 'plot_%s.png' % self.total_iters))
             plt.close()
