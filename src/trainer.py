@@ -187,7 +187,8 @@ class Trainer(object):
             show_progress=False,
             plot=False,
             out_chain=None,
-            max_prior=None):
+            max_prior=None,
+            max_start_tries=100):
 
         self.netG.eval()
 
@@ -202,23 +203,27 @@ class Trainer(object):
             batch_size = init_x.shape[0]
             z, _ = self.netG(torch.from_numpy(init_x).float().to(self.device))
             z = z.detach()
+            # Add the backward version of x rather than init_x due to numerical precision
+            x, _ = self.netG(z, mode='inverse')
+            x = x.detach().cpu().numpy()
+            if logl is None:
+                logl = loglike(transform(x))
         else:
-            z = torch.randn(batch_size, self.z_dim, device=self.device)
-
-        # Add the backward version of x rather than init_x due to numerical precision
-        x, _ = self.netG(z, mode='inverse')
-        x = x.detach().cpu().numpy()
-
-        if logl is None:
-            logl = np.full(batch_size, -1e30)
-            for ib in range(batch_size):
-                for i in range(100):
-                    lp = loglike(transform(x[ib]))
-                    if lp[0] > -1e30:
-                        logl[ib] = lp[0]
+            if logl is None:
+                for i in range(max_start_tries):
+                    z = torch.randn(batch_size, self.z_dim, device=self.device)
+                    x, _ = self.netG(z, mode='inverse')
+                    x = x.detach().cpu().numpy()
+                    logl = loglike(transform(x))
+                    if np.all(logl > -1e30):
                         break
-                    if i == 99:
+                    if i == max_start_tries - 1:
                         raise Exception('Could not find starting value')
+            else:
+                z = torch.randn(batch_size, self.z_dim, device=self.device)
+                x, _ = self.netG(z, mode='inverse')
+                x = x.detach().cpu().numpy()
+                logl = loglike(transform(x))                   
 
         samples.append(x)
         likes.append(logl)
