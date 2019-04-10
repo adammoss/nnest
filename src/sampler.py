@@ -25,8 +25,9 @@ class Sampler(object):
                  transform=None,
                  append_run_num=True,
                  run_num=None,
-                 h_dim=128,
-                 nslow=0,
+                 hidden_dim=128,
+                 num_slow=0,
+                 num_derived=0,
                  batch_size=100,
                  flow='nvp',
                  num_blocks=5,
@@ -35,6 +36,7 @@ class Sampler(object):
                  ):
 
         self.x_dim = x_dim
+        self.num_params = x_dim + num_derived
 
         def safe_loglike(x):
             if len(x.shape) == 1:
@@ -81,8 +83,8 @@ class Sampler(object):
 
         self.trainer = Trainer(
                 x_dim,
-                h_dim,
-                nslow=nslow,
+                hidden_dim,
+                nslow=num_slow,
                 batch_size=batch_size,
                 flow=flow,
                 num_blocks=num_blocks,

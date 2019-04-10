@@ -25,25 +25,27 @@ class NestedSampler(Sampler):
                  transform=None,
                  append_run_num=True,
                  run_num=None,
-                 h_dim=128,
-                 nslow=0,
+                 hidden_dim=128,
+                 num_slow=0,
+                 num_derived=0,
                  batch_size=100,
                  flow='nvp',
                  num_blocks=5,
                  num_layers=2,
                  log_dir='logs/test',
-                 npoints=1000
+                 num_live_points=1000
                  ):
 
-        self.npoints = npoints
+        self.num_live_points = num_live_points
         self.sampler = 'nested'
 
         super(NestedSampler, self).__init__(x_dim, loglike, transform=transform, append_run_num=append_run_num,
-                                            run_num=run_num, h_dim=h_dim, nslow=nslow, batch_size=batch_size, flow=flow,
+                                            run_num=run_num, hidden_dim=hidden_dim, num_slow=num_slow, 
+                                            num_derived=num_derived, batch_size=batch_size, flow=flow,
                                             num_blocks=num_blocks, num_layers=num_layers, log_dir=log_dir)
 
         if self.log:
-            self.logger.info('Num live points [%d]' % (self.npoints))
+            self.logger.info('Num live points [%d]' % (self.num_live_points))
 
         if self.log:
             with open(os.path.join(self.logs['results'], 'results.csv'), 'w') as f:
@@ -69,14 +71,14 @@ class NestedSampler(Sampler):
             test_mcmc_burn_in=0):
 
         if update_interval is None:
-            update_interval = max(1, round(self.npoints))
+            update_interval = max(1, round(self.num_live_points))
         else:
             update_interval = round(update_interval)
             if update_interval < 1:
                 raise ValueError("update_interval must be >= 1")
 
         if log_interval is None:
-            log_interval = max(1, round(0.2 * self.npoints))
+            log_interval = max(1, round(0.2 * self.num_live_points))
         else:
             log_interval = round(log_interval)
             if log_interval < 1:
@@ -97,12 +99,12 @@ class NestedSampler(Sampler):
         if self.use_mpi:
             self.logger.info('Using MPI with rank [%d]' % (self.mpi_rank))
             if self.mpi_rank == 0:
-                active_u = 2 * (np.random.uniform(size=(self.npoints, self.x_dim)) - 0.5)
+                active_u = 2 * (np.random.uniform(size=(self.num_live_points, self.x_dim)) - 0.5)
             else:
-                active_u = np.empty((self.npoints, self.x_dim), dtype=np.float64)
+                active_u = np.empty((self.num_live_points, self.x_dim), dtype=np.float64)
             self.comm.Bcast(active_u, root=0)
         else:
-            active_u = 2 * (np.random.uniform(size=(self.npoints, self.x_dim)) - 0.5)
+            active_u = 2 * (np.random.uniform(size=(self.num_live_points, self.x_dim)) - 0.5)
         active_v = self.transform(active_u)
 
         if self.use_mpi:
@@ -125,9 +127,9 @@ class NestedSampler(Sampler):
         saved_logwt = []
         h = 0.0  # Information, initially 0.
         logz = -1e300  # ln(Evidence Z), initially Z=0
-        logvol = np.log(1.0 - np.exp(-1.0 / self.npoints))
+        logvol = np.log(1.0 - np.exp(-1.0 / self.num_live_points))
         fraction_remain = 1.0
-        ncall = self.npoints  # number of calls we already made
+        ncall = self.num_live_points  # number of calls we already made
         first_time = True
         nb = self.mpi_size * mcmc_batch_size
 
@@ -147,7 +149,7 @@ class NestedSampler(Sampler):
             saved_logwt.append(logwt)
             saved_logl.append(active_logl[worst])
 
-            expected_vol = np.exp(-it / self.npoints)
+            expected_vol = np.exp(-it / self.num_live_points)
 
             # The new likelihood constraint is that of the worst object.
             loglstar = active_logl[worst]
@@ -212,7 +214,7 @@ class NestedSampler(Sampler):
                         # Get a new batch of trial points
                         nb = 0
                         idx = np.random.randint(
-                            low=0, high=self.npoints, size=mcmc_batch_size)
+                            low=0, high=self.num_live_points, size=mcmc_batch_size)
                         init_x = active_u[idx, :]
                         logl = active_logl[idx]
                         samples, likes, latent, scale, nc = self.trainer.sample(
@@ -259,8 +261,8 @@ class NestedSampler(Sampler):
                     self._save_samples(np.array(saved_v), np.exp(np.array(saved_logwt) - logz), np.array(saved_logl))
 
             # Shrink interval
-            logvol -= 1.0 / self.npoints
-            logz_remain = np.max(active_logl) - it / self.npoints
+            logvol -= 1.0 / self.num_live_points
+            logz_remain = np.max(active_logl) - it / self.num_live_points
             fraction_remain = np.logaddexp(logz, logz_remain) - logz
 
             if self.log:
@@ -270,8 +272,8 @@ class NestedSampler(Sampler):
             if fraction_remain < dlogz:
                 break
 
-        logvol = -len(saved_v) / self.npoints - np.log(self.npoints)
-        for i in range(self.npoints):
+        logvol = -len(saved_v) / self.num_live_points - np.log(self.num_live_points)
+        for i in range(self.num_live_points):
             logwt = logvol + active_logl[i]
             logz_new = np.logaddexp(logz, logwt)
             h = (np.exp(logwt - logz_new) * active_logl[i] + np.exp(logz - logz_new) * (h + logz) - logz_new)
@@ -284,8 +286,8 @@ class NestedSampler(Sampler):
             with open(os.path.join(self.logs['results'], 'final.csv'), 'w') as f:
                 writer = csv.writer(f)
                 writer.writerow(['niter', 'ncall', 'logz', 'logzerr', 'h'])
-                writer.writerow([it + 1, ncall, logz, np.sqrt(h / self.npoints), h])
+                writer.writerow([it + 1, ncall, logz, np.sqrt(h / self.num_live_points), h])
             self._save_samples(np.array(saved_v), np.exp(np.array(saved_logwt) - logz), np.array(saved_logl))
 
         print("niter: {:d}\n ncall: {:d}\n nsamples: {:d}\n logz: {:6.3f} +/- {:6.3f}\n h: {:6.3f}"
-              .format(it + 1, ncall, len(np.array(saved_v)), logz, np.sqrt(h / self.npoints), h))
+              .format(it + 1, ncall, len(np.array(saved_v)), logz, np.sqrt(h / self.num_live_points), h))

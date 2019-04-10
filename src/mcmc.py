@@ -25,8 +25,9 @@ class MCMCSampler(Sampler):
                  transform=None,
                  append_run_num=True,
                  run_num=None,
-                 h_dim=128,
-                 nslow=0,
+                 hidden_dim=128,
+                 num_slow=0,
+                 num_derived=0,
                  batch_size=100,
                  flow='nvp',
                  num_blocks=5,
@@ -36,7 +37,8 @@ class MCMCSampler(Sampler):
         self.sampler = 'mcmc'
 
         super(MCMCSampler, self).__init__(x_dim, loglike, transform=transform, append_run_num=append_run_num,
-                                          run_num=run_num, h_dim=h_dim, nslow=nslow, batch_size=batch_size, flow=flow,
+                                          run_num=run_num, hidden_dim=hidden_dim, num_slow=num_slow, 
+                                          num_derived=num_derived, batch_size=batch_size, flow=flow,
                                           num_blocks=num_blocks, num_layers=num_layers, log_dir=log_dir)
 
     def _init_samples(self, mcmc_steps=5000, mcmc_batch_size=5):
@@ -85,8 +87,8 @@ class MCMCSampler(Sampler):
         return mc
 
     def _read_samples(self, fileroot):
-        names = ['p%i' % i for i in range(int(self.x_dim))]
-        labels = [r'x_%i' % i for i in range(int(self.x_dim))]
+        names = ['p%i' % i for i in range(int(self.num_params))]
+        labels = [r'x_%i' % i for i in range(int(self.num_params))]
         files = chainFiles(fileroot)
         mc = MCSamples(fileroot, names=names, labels=labels, ignore_rows=0.3)
         mc.readChains(files)
