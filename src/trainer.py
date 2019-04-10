@@ -127,6 +127,7 @@ class Trainer(object):
             training_noise = noise
 
         if self.log:
+            self.logger.info('Number of training samples [%d]' % samples.shape[0])
             self.logger.info('Training noise [%5.4f]' % training_noise)
 
         X_train, X_valid = train_test_split(
