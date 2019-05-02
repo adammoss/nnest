@@ -7,7 +7,7 @@ sys.path.append(os.getcwd())
 
 def main(args):
 
-    from src.mcmc import MCMCSampler
+    from nnest.mcmc import MCMCSampler
 
     os.environ['CUDA_VISIBLE_DEVICES'] = ''
 

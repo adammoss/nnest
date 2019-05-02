@@ -23,8 +23,8 @@ import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 
-from src.networks import SingleSpeed, FastSlow, BatchNormFlow
-from src.utils.logger import create_logger
+from nnest.networks import SingleSpeed, FastSlow, BatchNormFlow
+from nnest.utils.logger import create_logger
 
 
 class Trainer(object):

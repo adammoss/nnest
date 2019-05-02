@@ -12,9 +12,9 @@ import json
 
 import numpy as np
 
-from src.trainer import Trainer
-from src.utils.logger import create_logger, make_run_dir
-from src.utils.evaluation import acceptance_rate, effective_sample_size, mean_jump_distance
+from nnest.trainer import Trainer
+from nnest.utils.logger import create_logger, make_run_dir
+from nnest.utils.evaluation import acceptance_rate, effective_sample_size, mean_jump_distance
 
 
 class Sampler(object):
