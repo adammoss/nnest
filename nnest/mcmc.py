@@ -109,14 +109,15 @@ class MCMCSampler(Sampler):
             bootstrap_batch_size=5,
             alpha=0,
             single_thin=1,
-            ignore_rows=0.3):
+            ignore_rows=0.0):
 
         if alpha == 0.0:
             alpha = 1 / self.x_dim ** 0.5
 
         if self.log:
             self.logger.info('Alpha [%5.4f]' % (alpha))
-
+        
+        next_start = None
         for t in range(bootstrap_iters):
 
             if t == 0:
@@ -128,9 +129,13 @@ class MCMCSampler(Sampler):
             else:
                 samples, likes, latent, scale, nc = self.trainer.sample(
                     loglike=self.loglike, transform=transform,
-                    mcmc_steps=bootstrap_mcmc_steps, alpha=alpha, dynamic=False, show_progress=True)
+                    mcmc_steps=bootstrap_mcmc_steps, 
+                    alpha=alpha, dynamic=False, show_progress=True,
+                    init_x=next_start)
+                next_start = samples[:,-1,:]
                 samples = transform(samples)
                 self._chain_stats(samples)
+                self.logger.info('Last sample: %s' % (next_start))
                 loglikes = -np.array(likes)
                 weights = np.ones(loglikes.shape)
                 mc = MCSamples(samples=[samples[0]], weights=[weights[0]], loglikes=[loglikes[0]],
@@ -141,11 +146,15 @@ class MCMCSampler(Sampler):
             mean = np.mean(samples, axis=0)
             std = np.std(samples, axis=0)
             samples = (samples - mean) / std
+            self.logger.info('Training for bootstrap iter %d with %d samples' % (t, len(samples)))
+            # Forget the current network
+            self.trainer.init_network()
             self.trainer.train(samples, max_iters=train_iters, noise=-1)
 
             def transform(x):
                 return x * std + mean
 
+        self.logger.info('Sampling...')
         samples, likes, latent, scale, nc = self.trainer.sample(
             loglike=self.loglike, transform=transform,
             mcmc_steps=mcmc_steps, alpha=alpha, dynamic=False, show_progress=True,
