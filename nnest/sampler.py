@@ -53,7 +53,12 @@ class Sampler(object):
         if transform is None:
             self.transform = lambda x: x
         else:
-            self.transform = transform
+            def safe_transform(x):
+                if len(x.shape) == 1:
+                    assert x.shape[0] == self.x_dim
+                    x = np.expand_dims(x, 0)
+                return transform(x)
+            self.transform = safe_transform
 
         self.use_mpi = False
         try:
@@ -106,7 +111,7 @@ class Sampler(object):
         ess = effective_sample_size(samples, mean, std)
         jump_distance = mean_jump_distance(samples)
         self.logger.info(
-            'Acceptance: [%5.4f] min ESS [%5.4f] max ESS [%5.4f] jump distance [%5.4f]' %
+            'Acceptance [%5.4f] min ESS [%5.4f] max ESS [%5.4f] jump distance [%5.4f]' %
             (acceptance, np.min(ess), np.max(ess), jump_distance))
         return acceptance, ess, jump_distance
 

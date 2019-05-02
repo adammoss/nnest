@@ -165,9 +165,8 @@ class Trainer(object):
                 best_model = self.netG.state_dict()
 
             if epoch == 1 or epoch % log_interval == 0:
-                print(
-                    'Epoch: {} validation loss: {:6.4f}'.format(
-                        epoch, validation_loss))
+                self.logger.info('Epoch [%i] train loss [%5.4f] validation loss [%5.4f]' % (
+                    epoch, train_loss, validation_loss))
 
             if self.path:
                 self.writer.add_scalar('loss', validation_loss, self.total_iters)
@@ -178,6 +177,7 @@ class Trainer(object):
                     )
                     self._train_plot(self.netG, samples)
 
+        self.logger.info('Best epoch [%i] validation loss [%5.4f]' % (best_validation_epoch, best_validation_loss))
         self.netG.load_state_dict(best_model)
 
     def sample(
@@ -410,7 +410,7 @@ class Trainer(object):
             data = data.to(self.device)
             with torch.no_grad():
                 # sum up batch loss
-                val_loss += -model.log_probs(data, cond_data).sum().item()
+                val_loss += -model.log_probs(data, cond_data).mean().item()
 
         return val_loss / len(loader.dataset)
 
@@ -422,7 +422,7 @@ class Trainer(object):
             x_data = torch.from_numpy(dataset).float()
             z, _ = model(x_data)
             z = z.detach().cpu().numpy()
-            if plot_grid:
+            if plot_grid and self.x_dim == 2:
                 grid = []
                 for x in np.linspace(np.min(dataset[:, 0]), np.max(dataset[:, 0]), 10):
                     for y in np.linspace(np.min(dataset[:, 1]), np.max(dataset[:, 1]), 5000):
@@ -443,11 +443,11 @@ class Trainer(object):
 
         if self.path:
             fig, ax = plt.subplots(1, 3, figsize=(10, 4))
-            if plot_grid:
+            if plot_grid and self.x_dim == 2:
                 ax[0].scatter(grid[:, 0], grid[:, 1], c=grid[:, 0], marker='.', s=1, linewidths=0)
             ax[0].scatter(dataset[:, 0], dataset[:, 1], s=4)
             ax[0].set_title('Real data')
-            if plot_grid:
+            if plot_grid and self.x_dim == 2:
                 ax[1].scatter(z_grid[:, 0], z_grid[:, 1], c=grid[:, 0], marker='.', s=1, linewidths=0)
             ax[1].scatter(z[:, 0], z[:, 1], s=4)
             ax[1].set_title('Latent data')
