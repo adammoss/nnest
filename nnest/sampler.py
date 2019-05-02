@@ -53,7 +53,12 @@ class Sampler(object):
         if transform is None:
             self.transform = lambda x: x
         else:
-            self.transform = transform
+            def safe_transform(x):
+                if len(x.shape) == 1:
+                    assert x.shape[0] == self.x_dim
+                    x = np.expand_dims(x, 0)
+                return transform(x)
+            self.transform = safe_transform
 
         self.use_mpi = False
         try:
