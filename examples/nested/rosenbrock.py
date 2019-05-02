@@ -8,7 +8,7 @@ sys.path.append(os.getcwd())
 
 
 def main(args):
-    from src.nested import NestedSampler
+    from nnest.nested import NestedSampler
 
     os.environ['CUDA_VISIBLE_DEVICES'] = ''
 
