@@ -9,6 +9,7 @@ from __future__ import division
 
 import os
 import time
+import copy
 
 import torch
 from torch.utils.data import DataLoader
@@ -93,12 +94,12 @@ class Trainer(object):
         self.optimizer = torch.optim.Adam(
             self.netG.parameters(), lr=0.0001, weight_decay=1e-6)
 
-        if self.path is not None:
-            print(self.netG)
-            self.writer = SummaryWriter(self.path)
-
         self.logger = create_logger(__name__)
         self.log = log
+
+        if self.path is not None:
+            self.logger.info(self.netG)
+            self.writer = SummaryWriter(self.path)
 
     def train(
             self,
@@ -107,7 +108,7 @@ class Trainer(object):
             log_interval=50,
             save_interval=50,
             noise=0.0,
-            validation_fraction=0.05):
+            validation_fraction=0.1):
 
         start_time = time.time()
 
@@ -145,7 +146,7 @@ class Trainer(object):
 
         best_validation_loss = float('inf')
         best_validation_epoch = 0
-        best_model = self.netG
+        best_model = copy.deepcopy(self.netG)
 
         for epoch in range(1, max_iters + 1):
 
@@ -158,11 +159,11 @@ class Trainer(object):
             if validation_loss < best_validation_loss:
                 best_validation_epoch = epoch
                 best_validation_loss = validation_loss
+                best_model = copy.deepcopy(self.netG)
 
             if epoch == 1 or epoch % log_interval == 0:
-                print(
-                    'Epoch: {} validation loss: {:6.4f}'.format(
-                        epoch, validation_loss))
+                self.logger.info('Epoch [%i] train loss [%5.4f] validation loss [%5.4f]' % (
+                    epoch, train_loss, validation_loss))
 
             if self.path:
                 self.writer.add_scalar('loss', validation_loss, self.total_iters)
@@ -172,6 +173,10 @@ class Trainer(object):
                         os.path.join(self.path, 'models', 'netG.pt')
                     )
                     self._train_plot(self.netG, samples)
+
+        self.logger.info('Best epoch [%i] validation loss [%5.4f]' % (best_validation_epoch, best_validation_loss))
+
+        self.netG.load_state_dict(best_model.state_dict())
 
     def sample(
             self,
@@ -403,7 +408,7 @@ class Trainer(object):
             data = data.to(self.device)
             with torch.no_grad():
                 # sum up batch loss
-                val_loss += -model.log_probs(data, cond_data).sum().item()
+                val_loss += -model.log_probs(data, cond_data).mean().item()
 
         return val_loss / len(loader.dataset)
 
