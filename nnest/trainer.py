@@ -420,7 +420,7 @@ class Trainer(object):
             x_data = torch.from_numpy(dataset).float()
             z, _ = model(x_data)
             z = z.detach().cpu().numpy()
-            if plot_grid:
+            if plot_grid and self.x_dim == 2:
                 grid = []
                 for x in np.linspace(np.min(dataset[:, 0]), np.max(dataset[:, 0]), 10):
                     for y in np.linspace(np.min(dataset[:, 1]), np.max(dataset[:, 1]), 5000):
@@ -441,11 +441,11 @@ class Trainer(object):
 
         if self.path:
             fig, ax = plt.subplots(1, 3, figsize=(10, 4))
-            if plot_grid:
+            if plot_grid and self.x_dim == 2:
                 ax[0].scatter(grid[:, 0], grid[:, 1], c=grid[:, 0], marker='.', s=1, linewidths=0)
             ax[0].scatter(dataset[:, 0], dataset[:, 1], s=4)
             ax[0].set_title('Real data')
-            if plot_grid:
+            if plot_grid and self.x_dim == 2:
                 ax[1].scatter(z_grid[:, 0], z_grid[:, 1], c=grid[:, 0], marker='.', s=1, linewidths=0)
             ax[1].scatter(z[:, 0], z[:, 1], s=4)
             ax[1].set_title('Latent data')
