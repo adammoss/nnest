@@ -15,7 +15,7 @@ import numpy as np
 from getdist.mcsamples import MCSamples
 from getdist.chains import chainFiles
 
-from src.sampler import Sampler
+from nnest.sampler import Sampler
 
 
 class MCMCSampler(Sampler):

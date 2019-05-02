@@ -14,7 +14,7 @@ import csv
 
 import numpy as np
 
-from src.sampler import Sampler
+from nnest.sampler import Sampler
 
 
 class NestedSampler(Sampler):
