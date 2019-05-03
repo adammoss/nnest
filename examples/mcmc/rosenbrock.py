@@ -11,9 +11,15 @@ def main(args):
     from nnest.mcmc import MCMCSampler
 
     os.environ['CUDA_VISIBLE_DEVICES'] = ''
-
-    def loglike(z):
+    
+    def loglike_orig(z):
         return np.array([-sum(100.0 * (x[1:] - x[:-1] ** 2.0) ** 2.0 + (1 - x[:-1]) ** 2.0) for x in z])
+    
+    # pairwise rosenbrocks, multiplied together
+    assert args.x_dim % 2 == 0
+    
+    def loglike(z):
+        return np.array([-sum(100.0 * (x[1::2] - x[::2] ** 2.0) ** 2.0 + (1 - x[::2]) ** 2.0) * 2. / len(x) for x in z])
 
     def transform(x):
         return 500. * x - 100

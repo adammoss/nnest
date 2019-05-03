@@ -410,7 +410,7 @@ class Trainer(object):
             data = data.to(self.device)
             with torch.no_grad():
                 # sum up batch loss
-                val_loss += -model.log_probs(data, cond_data).mean().item()
+                val_loss += -model.log_probs(data, cond_data).sum().item()
 
         return val_loss / len(loader.dataset)
 

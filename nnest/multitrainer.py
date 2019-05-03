@@ -25,9 +25,10 @@ import matplotlib.pyplot as plt
 
 from nnest.networks import SingleSpeed, FastSlow, BatchNormFlow
 from nnest.utils.logger import create_logger
+from nnest.trainer import Trainer
 
 
-class MultiTrainer(object):
+class MultiTrainer(Trainer):
 
     def __init__(self,
                  xdim,
@@ -127,7 +128,7 @@ class MultiTrainer(object):
             # compute distance to nearest neighbor
             kdt = scipy.spatial.cKDTree(samples)
             dists, neighs = kdt.query(samples, 2)
-            training_noise = .2 * np.mean(dists)
+            training_noise = 0.5 * np.mean(dists) / self.x_dim
         else:
             training_noise = noise
 
@@ -192,14 +193,16 @@ class MultiTrainer(object):
                         self.netG.state_dict(),
                         os.path.join(self.path, 'models', 'netG.pt%d' % epoch)
                     )
-                    self._train_plot(self.netG, samples)
+                    if self.x_dim == 2:
+                        self._train_plot(self.netG, samples)
         self.netG.load_state_dict(best_model)
     
-    def choose_netG(self):
+    def choose_netG(self, verbose=False):
         # compute accept probabilities
-        print("Networks:", ' '.join(['%3d/%3d' % (A, S) for A, S in zip(self.netGs_accepts, self.netGs_samples)]))
-        # give initial acceptance probabilities of 1%
-        probs = np.array([(A+1)/(S+1) for A, S in zip(self.netGs_accepts, self.netGs_samples)])
+        # give initially equal acceptance probabilities
+        if verbose:
+            print("Networks:", ' '.join(['%3d/%3d' % (A, S) for A, S in zip(self.netGs_accepts, self.netGs_samples)]))
+        probs = np.array([(A + 1.) / (S + 1) for A, S in zip(self.netGs_accepts, self.netGs_samples)])
         probs /= probs.sum()
         i = np.random.choice(np.arange(len(probs)), p=probs)
         self.netG.load_state_dict(self.netGs[i])
@@ -227,11 +230,11 @@ class MultiTrainer(object):
         alllatent = []
         alllikes = []
         allncall = 0
-        nsamples = 20
         scales = [alpha * 1.0 for _ in self.netGs_init_x]
+        nsamples = 200 // len(self.netGs_init_x)
         while len(allsamples) < mcmc_steps:
-            neti = self.choose_netG()
-            init_x = self.netGs_init_x[neti]
+            neti = self.choose_netG(verbose = True)
+            #init_x = self.netGs_init_x[neti]
             scale = scales[neti]
 
             samples, likes, latent, scale, ncall, accept = self.subsample(
@@ -244,6 +247,7 @@ class MultiTrainer(object):
             self.netGs_accepts[neti] += accept.min()
             self.netGs_samples[neti] += nsamples
             self.netGs_init_x[neti] = samples[-1]
+            init_x = samples[-1]
             scales[neti] = scale
             
             allsamples += samples
@@ -266,10 +270,6 @@ class MultiTrainer(object):
                       bins=200, cmap=cmap, vmin=1, alpha=0.2)
             if self.writer is not None:
                 self.writer.add_figure('chain', fig, self.total_iters)
-
-        if out_chain is not None:
-            for ib in range(batch_size):
-                files[ib].close()
 
         return samples, likes, latent, scale, ncall
         
@@ -424,113 +424,11 @@ class MultiTrainer(object):
                     files[ib].write(" ".join(["%.5E" % vi for vi in v[ib]]))
                     files[ib].write("\n")
                     files[ib].flush()
+        
+        if out_chain is not None:
+            for ib in range(batch_size):
+                files[ib].close()
+
 
         return samples, likes, latent, scale, ncall, accept
 
-    def _jacobian(self, z):
-        """ Calculate det d f^{-1} (z)/dz
-        """
-        z.requires_grad_(True)
-        x, _ = self.netG(z, mode='inverse')
-        J = torch.stack([torch.autograd.grad(outputs=x[:, i], inputs=z, retain_graph=True,
-                                             grad_outputs=torch.ones(z.shape[0]))[0] for i in
-                         range(x.shape[1])]).permute(1, 0, 2)
-        return torch.stack([torch.log(torch.abs(torch.det(J[i, :, :])))
-                            for i in range(x.shape[0])])
-
-    def _train(self, epoch, model, loader, noise=0.0):
-
-        model.train()
-        train_loss = 0
-
-        for batch_idx, data in enumerate(loader):
-            if isinstance(data, list):
-                if len(data) > 1:
-                    cond_data = data[1].float()
-                    cond_data = cond_data.to(self.device)
-                else:
-                    cond_data = None
-                data = data[0]
-            data = (data + noise * torch.randn_like(data)).to(self.device)
-            self.optimizer.zero_grad()
-            loss = -model.log_probs(data, cond_data).mean()
-            train_loss += loss.item()
-            loss.backward()
-            self.optimizer.step()
-
-        for module in model.modules():
-            if isinstance(module, BatchNormFlow):
-                module.momentum = 0
-
-        with torch.no_grad():
-            model(loader.dataset.tensors[0].to(data.device))
-
-        for module in model.modules():
-            if isinstance(module, BatchNormFlow):
-                module.momentum = 1
-
-        return train_loss / len(loader.dataset)
-
-    def _validate(self, epoch, model, loader):
-
-        model.eval()
-        val_loss = 0
-        cond_data = None
-
-        for batch_idx, data in enumerate(loader):
-            if isinstance(data, list):
-                if len(data) > 1:
-                    cond_data = data[1].float()
-                    cond_data = cond_data.to(self.device)
-                data = data[0]
-            data = data.to(self.device)
-            with torch.no_grad():
-                # sum up batch loss
-                val_loss += -model.log_probs(data, cond_data).sum().item()
-
-        return val_loss / len(loader.dataset)
-
-    def _train_plot(self, model, dataset, plot_grid=True):
-
-        model.eval()
-        with torch.no_grad():
-            x_synth = model.sample(dataset.size).detach().cpu().numpy()
-            x_data = torch.from_numpy(dataset).float()
-            z, _ = model(x_data)
-            z = z.detach().cpu().numpy()
-            if plot_grid:
-                grid = []
-                for x in np.linspace(np.min(dataset[:, 0]), np.max(dataset[:, 0]), 10):
-                    for y in np.linspace(np.min(dataset[:, 1]), np.max(dataset[:, 1]), 5000):
-                        grid.append([x, y])
-                for y in np.linspace(np.min(dataset[:, 1]), np.max(dataset[:, 1]), 10):
-                    for x in np.linspace(np.min(dataset[:, 0]), np.max(dataset[:, 0]), 5000):
-                        grid.append([x, y])
-                grid = np.array(grid)
-                x_grid = torch.from_numpy(grid).float()
-                z_grid, _ = model(x_grid)
-                z_grid = z_grid.detach().cpu().numpy()
-
-        if self.writer is not None:
-            fig, ax = plt.subplots(2, figsize=(5, 10))
-            ax[0].scatter(dataset[:, 0], dataset[:, 1], c=dataset[:, 0], s=4)
-            ax[1].scatter(z[:, 0], z[:, 1], c=dataset[:, 0], s=4)
-            self.writer.add_figure('latent', fig, self.total_iters)
-
-        if self.path:
-            fig, ax = plt.subplots(1, 3, figsize=(10, 4))
-            if plot_grid:
-                ax[0].scatter(grid[:, 0], grid[:, 1], c=grid[:, 0], marker='.', s=1, linewidths=0)
-            ax[0].scatter(dataset[:, 0], dataset[:, 1], s=4)
-            ax[0].set_title('Real data')
-            if plot_grid:
-                ax[1].scatter(z_grid[:, 0], z_grid[:, 1], c=grid[:, 0], marker='.', s=1, linewidths=0)
-            ax[1].scatter(z[:, 0], z[:, 1], s=4)
-            ax[1].set_title('Latent data')
-            ax[1].set_xlim([-3, 3])
-            ax[1].set_ylim([-3, 3])
-            ax[2].scatter(x_synth[:, 0], x_synth[:, 1], s=2)
-            ax[2].set_title('Synthetic data')
-            plt.tight_layout()
-            plt.savefig(os.path.join(self.path, 'plots', 'plot_%s.png' % self.total_iters))
-            plt.close()
