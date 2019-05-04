@@ -6,6 +6,19 @@ Neural network accelerated nested and MCMC sampling. The target distribution is 
 ![latent](https://github.com/adammoss/nnest/blob/master/himmelblau.png)
 ![latent](https://github.com/adammoss/nnest/blob/master/gauss.png)
 
+### Installation
+
+NNest can be installed via pip
+```
+pip install nnest
+```
+Alternatively the latest version can be obtained by
+```
+git clone https://github.com/adammoss/nnest
+cd nnest
+python setup.py install
+```
+
 ### Nested Sampling
 
 Nested sampling examples can be found in the `examples/nested` directory, and can be run with e.g. 
