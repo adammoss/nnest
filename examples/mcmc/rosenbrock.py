@@ -11,16 +11,23 @@ def main(args):
     from nnest.mcmc import MCMCSampler
 
     os.environ['CUDA_VISIBLE_DEVICES'] = ''
-
-    def loglike(z):
+    
+    def loglike_orig(z):
         return np.array([-sum(100.0 * (x[1:] - x[:-1] ** 2.0) ** 2.0 + (1 - x[:-1]) ** 2.0) for x in z])
+    
+    # pairwise rosenbrocks, multiplied together
+    assert args.x_dim % 2 == 0
+    
+    def loglike(z):
+        return np.array([-sum(100.0 * (x[1::2] - x[::2] ** 2.0) ** 2.0 + (1 - x[::2]) ** 2.0) * 2. / len(x) for x in z])
 
     def transform(x):
-        return 5. * x
+        return 500. * x - 100
 
     sampler = MCMCSampler(args.x_dim, loglike, transform=transform, log_dir=args.log_dir, hidden_dim=args.hidden_dim,
                           num_layers=args.num_layers, num_blocks=args.num_blocks, num_slow=args.num_slow)
-    sampler.run(train_iters=args.train_iters, mcmc_steps=args.mcmc_steps, single_thin=10)
+    sampler.run(train_iters=args.train_iters, mcmc_steps=args.mcmc_steps, single_thin=10, 
+                bootstrap_iters=args.burnin_iters, bootstrap_mcmc_steps=5000 + 1000 * args.x_dim)
 
 
 if __name__ == '__main__':
@@ -30,6 +37,8 @@ if __name__ == '__main__':
                         help="Dimensionality")
     parser.add_argument('--train_iters', type=int, default=100,
                         help="number of train iters")
+    parser.add_argument('--burnin_iters', type=int, default=1,
+                        help="number of iters for finding good training spot")
     parser.add_argument("--mcmc_steps", type=int, default=10000)
     parser.add_argument('--hidden_dim', type=int, default=128)
     parser.add_argument('--num_layers', type=int, default=1)

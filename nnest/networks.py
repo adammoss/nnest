@@ -183,10 +183,10 @@ class SingleSpeed(nn.Module):
     def __init__(self, num_inputs, num_hidden, num_blocks, num_layers):
         super(SingleSpeed, self).__init__()
 
+        modules = []
         mask = torch.arange(0, num_inputs) % 2
         mask = mask.float()
-        modules = []
-        for _ in range(num_blocks):
+        for i in range(num_blocks):
             modules += [
                 CouplingLayer(
                     num_inputs, num_hidden, mask, None,

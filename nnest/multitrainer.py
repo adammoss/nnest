@@ -7,7 +7,7 @@
 from __future__ import print_function
 from __future__ import division
 
-import os
+import os, sys
 import time
 
 import torch
@@ -18,6 +18,8 @@ from sklearn.model_selection import train_test_split
 import scipy.spatial
 from tqdm import tqdm
 
+import emcee
+
 import matplotlib
 
 matplotlib.use('Agg')
@@ -25,9 +27,10 @@ import matplotlib.pyplot as plt
 
 from nnest.networks import SingleSpeed, FastSlow, BatchNormFlow
 from nnest.utils.logger import create_logger
+from nnest.trainer import Trainer
 
 
-class Trainer(object):
+class MultiTrainer(Trainer):
 
     def __init__(self,
                  xdim,
@@ -112,6 +115,8 @@ class Trainer(object):
             save_interval=50,
             noise=0.0,
             validation_fraction=0.05):
+        
+        assert samples.shape[1] == self.x_dim, samples.shape
 
         start_time = time.time()
 
@@ -124,9 +129,10 @@ class Trainer(object):
                 samples)
 
         if noise < 0:
+            # compute distance to nearest neighbor
             kdt = scipy.spatial.cKDTree(samples)
             dists, neighs = kdt.query(samples, 2)
-            training_noise = .2 * np.mean(dists)
+            training_noise = 0.5 * np.mean(dists) / self.x_dim
         else:
             training_noise = noise
 
@@ -150,7 +156,12 @@ class Trainer(object):
         best_validation_loss = float('inf')
         best_validation_epoch = 0
         best_model = self.netG.state_dict()
+        self.netGs = []
+        self.netGs_accepts = []
+        self.netGs_samples = []
+        self.netGs_init_x = []
 
+        stored = '  '
         for epoch in range(1, max_iters + 1):
 
             self.total_iters += 1
@@ -158,29 +169,154 @@ class Trainer(object):
             train_loss = self._train(
                 epoch, self.netG, train_loader, noise=training_noise)
             validation_loss = self._validate(epoch, self.netG, valid_loader)
-
-            if validation_loss < best_validation_loss:
+            
+            # 1) remember only if much better
+            # 2) when performance is improving drastically at each epoch, avoid storing every epoch.
+            if validation_loss < best_validation_loss - 1.0 and epoch >= best_validation_epoch + save_interval:
                 best_validation_epoch = epoch
                 best_validation_loss = validation_loss
                 best_model = self.netG.state_dict()
+                self.netGs.append(self.netG.state_dict())
+                self.netGs_accepts.append(0)
+                self.netGs_samples.append(0)
+                self.netGs_init_x.append(None)
+                stored = '**'
 
             if epoch == 1 or epoch % log_interval == 0:
-                self.logger.info('Epoch [%i] train loss [%5.4f] validation loss [%5.4f]' % (
-                    epoch, train_loss, validation_loss))
+                print(
+                    'Epoch: {} validation loss: {:6.4f} {}'.format(
+                        epoch, validation_loss, stored))
+                stored = '  '
+                
+            #if epoch % save_interval == 0:
 
             if self.path:
                 self.writer.add_scalar('loss', validation_loss, self.total_iters)
                 if epoch % save_interval == 0:
                     torch.save(
                         self.netG.state_dict(),
-                        os.path.join(self.path, 'models', 'netG.pt')
+                        os.path.join(self.path, 'models', 'netG.pt%d' % epoch)
                     )
-                    self._train_plot(self.netG, samples)
-
-        self.logger.info('Best epoch [%i] validation loss [%5.4f]' % (best_validation_epoch, best_validation_loss))
+                    if self.x_dim == 2:
+                        self._train_plot(self.netG, samples)
         self.netG.load_state_dict(best_model)
+    
+    def choose_netG(self, verbose=False):
+        # compute accept probabilities
+        # give initially equal acceptance probabilities
+        if verbose:
+            print("Sampling from networks:", ' '.join(['%4d/%4d' % (A, S) for A, S in zip(self.netGs_accepts, self.netGs_samples)]), end=" \r")
+            sys.stdout.flush()
+        probs = np.array([(A + 1.) / (S + 1) for A, S in zip(self.netGs_accepts, self.netGs_samples)])
+        probs /= probs.sum()
+        i = np.random.choice(np.arange(len(probs)), p=probs)
+        self.netG.load_state_dict(self.netGs[i])
+        #print("Network %d: %d/%d" % (i, self.netGs_accepts[i], self.netGs_samples[i]))
+        return i
 
     def sample(
+            self,
+            mcmc_steps=20,
+            alpha=1.0,
+            dynamic=True,
+            batch_size=1,
+            loglike=None,
+            init_x=None,
+            logl=None,
+            loglstar=None,
+            transform=None,
+            show_progress=False,
+            plot=False,
+            out_chain=None,
+            max_prior=None,
+            nwalkers=40):
+        
+        def transformed_logpost(z):
+            assert z.shape == (self.x_dim,), z.shape
+            x, log_det_J = self.netG(torch.from_numpy(z.reshape((1,-1))).float().to(self.device), mode='inverse')
+            x = x.detach().cpu().numpy()
+            lnlike = float(loglike(transform(x)))
+            log_det_J = float(log_det_J.detach())
+            logprob = log_det_J + lnlike
+            #print('Like=%.1f' % logprob, x)
+            return logprob
+
+        allsamples = []
+        alllatent = []
+        alllikes = []
+        allncall = 0
+        populations = [None for net in self.netGs]
+        nsteps = 4
+        #nsamples = 200 // len(self.netGs_init_x)
+        while allncall < mcmc_steps:
+            neti = self.choose_netG(verbose = True)
+            sampler = populations[neti]
+            if sampler is None:
+                z0 = np.random.normal(size=(nwalkers, self.x_dim))
+                if init_x is not None:
+                    batch_size = init_x.shape[0]
+                    z, _ = self.netG(torch.from_numpy(init_x).float().to(self.device))
+                    z = z.detach()
+                    z0[:batch_size,:] = z
+                
+                sampler = emcee.EnsembleSampler(nwalkers=nwalkers, dim=self.x_dim, lnpostfn=transformed_logpost)
+                pos, lnprob, rstate = sampler.run_mcmc(z0, nsteps)
+                populations[neti] = sampler
+            else:
+                # advance population
+                pos, lnprob, rstate = sampler.run_mcmc(sampler.chain[:,-1,:], lnprob0=sampler.lnprobability[:,-1], N=nsteps)
+            
+            alllatent.append(pos)
+            alllikes.append(lnprob)
+            allncall += nsteps * nwalkers
+            x, log_det_J = self.netG(torch.from_numpy(pos).float().to(self.device), mode='inverse')
+            x = x.detach().cpu().numpy()
+            allsamples.append(x)
+            
+            ar = sampler.acceptance_fraction
+            Nsamples = len(sampler.flatchain)
+            #self.logger.info('Network %d sampler accepted: %.3f (%.d/%d)' % (neti, ar.mean(), ar.mean() * Nsamples, Nsamples))
+            self.netGs_accepts[neti] = int(ar.mean() * Nsamples)
+            self.netGs_samples[neti] = Nsamples
+        
+        #print(np.shape(allsamples), np.shape(alllikes), np.shape(alllatent))
+        # Transpose so shape is (chain_num, iteration, dim)
+        #samples = np.transpose(np.array(allsamples), axes=[1, 0, 2])
+        #latent = np.transpose(np.array(alllatent), axes=[1, 0, 2])
+        #likes = np.transpose(np.array(alllikes), axes=[1, 0])
+        samples = np.array(allsamples).reshape((1, -1, self.x_dim))
+        latent = np.array(alllatent).reshape((1, -1, self.x_dim))
+        likes = np.array(alllikes).reshape((1, -1))
+        print()
+        ncall = allncall
+
+        if self.path and plot:
+            cmap = plt.cm.jet
+            cmap.set_under('w', 1)
+            fig, ax = plt.subplots()
+            ax.hist2d(samples[0, :, 0], samples[0, :, 1],
+                      bins=200, cmap=cmap, vmin=1, alpha=0.2)
+            #if self.writer is not None:
+            #    self.writer.add_figure('chain', fig, self.total_iters)
+            plt.tight_layout()
+            plt.savefig(os.path.join(self.path, 'plots', 'chain_%s.png' % self.total_iters))
+            plt.close()
+            fig, ax = plt.subplots()
+            ax.plot(likes[0, len(likes[0])//3:])
+            self.logger.info('lnLike: %d+-%d -> %d+-%d' % (
+                alllikes[len(alllikes)//3].mean(), alllikes[len(alllikes)//3].std(), 
+                alllikes[-1].mean(), alllikes[-1].std()
+            ))
+            #if self.writer is not None:
+            #    self.writer.add_figure('likeevol', fig, self.total_iters)
+            plt.tight_layout()
+            plt.savefig(os.path.join(self.path, 'plots', 'likeevol_%s.png' % self.total_iters))
+            plt.close()
+
+        return samples, likes, latent, alpha, ncall
+        
+
+    def subsample(
             self,
             mcmc_steps=20,
             alpha=1.0,
@@ -330,131 +466,11 @@ class Trainer(object):
                     files[ib].write(" ".join(["%.5E" % vi for vi in v[ib]]))
                     files[ib].write("\n")
                     files[ib].flush()
-
-        # Transpose so shape is (chain_num, iteration, dim)
-        samples = np.transpose(np.array(samples), axes=[1, 0, 2])
-        likes = np.transpose(np.array(likes), axes=[1, 0])
-        latent = np.transpose(np.array(latent), axes=[1, 0, 2])
-
-        if self.path and plot:
-            cmap = plt.cm.jet
-            cmap.set_under('w', 1)
-            fig, ax = plt.subplots()
-            ax.hist2d(samples[:, -1, 0], samples[:, -1, 1],
-                      bins=200, cmap=cmap, vmin=1, alpha=0.2)
-            if self.writer is not None:
-                self.writer.add_figure('chain', fig, self.total_iters)
-
+        
         if out_chain is not None:
             for ib in range(batch_size):
                 files[ib].close()
 
-        return samples, likes, latent, scale, ncall
 
-    def _jacobian(self, z):
-        """ Calculate det d f^{-1} (z)/dz
-        """
-        z.requires_grad_(True)
-        x, _ = self.netG(z, mode='inverse')
-        J = torch.stack([torch.autograd.grad(outputs=x[:, i], inputs=z, retain_graph=True,
-                                             grad_outputs=torch.ones(z.shape[0]))[0] for i in
-                         range(x.shape[1])]).permute(1, 0, 2)
-        return torch.stack([torch.log(torch.abs(torch.det(J[i, :, :])))
-                            for i in range(x.shape[0])])
+        return samples, likes, latent, scale, ncall, accept
 
-    def _train(self, epoch, model, loader, noise=0.0):
-
-        model.train()
-        train_loss = 0
-
-        for batch_idx, data in enumerate(loader):
-            if isinstance(data, list):
-                if len(data) > 1:
-                    cond_data = data[1].float()
-                    cond_data = cond_data.to(self.device)
-                else:
-                    cond_data = None
-                data = data[0]
-            data = (data + noise * torch.randn_like(data)).to(self.device)
-            self.optimizer.zero_grad()
-            loss = -model.log_probs(data, cond_data).mean()
-            train_loss += loss.item()
-            loss.backward()
-            self.optimizer.step()
-
-        for module in model.modules():
-            if isinstance(module, BatchNormFlow):
-                module.momentum = 0
-
-        with torch.no_grad():
-            model(loader.dataset.tensors[0].to(data.device))
-
-        for module in model.modules():
-            if isinstance(module, BatchNormFlow):
-                module.momentum = 1
-
-        return train_loss / len(loader.dataset)
-
-    def _validate(self, epoch, model, loader):
-
-        model.eval()
-        val_loss = 0
-        cond_data = None
-
-        for batch_idx, data in enumerate(loader):
-            if isinstance(data, list):
-                if len(data) > 1:
-                    cond_data = data[1].float()
-                    cond_data = cond_data.to(self.device)
-                data = data[0]
-            data = data.to(self.device)
-            with torch.no_grad():
-                # sum up batch loss
-                val_loss += -model.log_probs(data, cond_data).sum().item()
-
-        return val_loss / len(loader.dataset)
-
-    def _train_plot(self, model, dataset, plot_grid=True):
-
-        model.eval()
-        with torch.no_grad():
-            x_synth = model.sample(dataset.size).detach().cpu().numpy()
-            x_data = torch.from_numpy(dataset).float()
-            z, _ = model(x_data)
-            z = z.detach().cpu().numpy()
-            if plot_grid and self.x_dim == 2:
-                grid = []
-                for x in np.linspace(np.min(dataset[:, 0]), np.max(dataset[:, 0]), 10):
-                    for y in np.linspace(np.min(dataset[:, 1]), np.max(dataset[:, 1]), 5000):
-                        grid.append([x, y])
-                for y in np.linspace(np.min(dataset[:, 1]), np.max(dataset[:, 1]), 10):
-                    for x in np.linspace(np.min(dataset[:, 0]), np.max(dataset[:, 0]), 5000):
-                        grid.append([x, y])
-                grid = np.array(grid)
-                x_grid = torch.from_numpy(grid).float()
-                z_grid, _ = model(x_grid)
-                z_grid = z_grid.detach().cpu().numpy()
-
-        if self.writer is not None:
-            fig, ax = plt.subplots(2, figsize=(5, 10))
-            ax[0].scatter(dataset[:, 0], dataset[:, 1], c=dataset[:, 0], s=4)
-            ax[1].scatter(z[:, 0], z[:, 1], c=dataset[:, 0], s=4)
-            self.writer.add_figure('latent', fig, self.total_iters)
-
-        if self.path:
-            fig, ax = plt.subplots(1, 3, figsize=(10, 4))
-            if plot_grid and self.x_dim == 2:
-                ax[0].scatter(grid[:, 0], grid[:, 1], c=grid[:, 0], marker='.', s=1, linewidths=0)
-            ax[0].scatter(dataset[:, 0], dataset[:, 1], s=4)
-            ax[0].set_title('Real data')
-            if plot_grid and self.x_dim == 2:
-                ax[1].scatter(z_grid[:, 0], z_grid[:, 1], c=grid[:, 0], marker='.', s=1, linewidths=0)
-            ax[1].scatter(z[:, 0], z[:, 1], s=4)
-            ax[1].set_title('Latent data')
-            ax[1].set_xlim([-3, 3])
-            ax[1].set_ylim([-3, 3])
-            ax[2].scatter(x_synth[:, 0], x_synth[:, 1], s=2)
-            ax[2].set_title('Synthetic data')
-            plt.tight_layout()
-            plt.savefig(os.path.join(self.path, 'plots', 'plot_%s.png' % self.total_iters))
-            plt.close()

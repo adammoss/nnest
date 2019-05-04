@@ -48,7 +48,7 @@ class MCMCSampler(Sampler):
         logl = self.loglike(v)
         samples = []
         likes = []
-        for i in range(mcmc_steps):
+        for i in range(mcmc_steps // mcmc_batch_size):
             du = np.random.standard_normal(u.shape) * 0.1
             u_prime = u + du
             v_prime = self.transform(u_prime)
@@ -73,11 +73,13 @@ class MCMCSampler(Sampler):
             u = u_prime * m + u * (1 - m)
             v = v_prime * m + v * (1 - m)
             logl = logl_prime * mask + logl * (1 - mask)
+            assert v.shape[1] == self.x_dim, v.shape
             samples.append(v)
             likes.append(logl)
         samples = np.transpose(np.array(samples), axes=[1, 0, 2])
         loglikes = -np.transpose(np.array(likes), axes=[1, 0])
         weights = np.ones(loglikes.shape)
+        assert samples.shape[-1] == self.x_dim, samples.shape
         self._chain_stats(samples)
         self._save_samples(samples, weights, loglikes)
         names = ['p%i' % i for i in range(int(self.x_dim))]
@@ -116,7 +118,9 @@ class MCMCSampler(Sampler):
 
         if self.log:
             self.logger.info('Alpha [%5.4f]' % (alpha))
-
+        
+        allsamples = []
+        next_start = None
         for t in range(bootstrap_iters):
 
             if t == 0:
@@ -128,26 +132,43 @@ class MCMCSampler(Sampler):
             else:
                 samples, likes, latent, scale, nc = self.trainer.sample(
                     loglike=self.loglike, transform=transform,
-                    mcmc_steps=bootstrap_mcmc_steps, alpha=alpha, dynamic=False, show_progress=True)
+                    mcmc_steps=bootstrap_mcmc_steps, 
+                    alpha=alpha, dynamic=False, show_progress=True,
+                    init_x=next_start, plot=True)
+                next_start = samples[:,-1,:]
+                #next_start = None
                 samples = transform(samples)
                 self._chain_stats(samples)
+                #self.logger.info('Last sample: %s' % (next_start))
                 loglikes = -np.array(likes)
                 weights = np.ones(loglikes.shape)
                 mc = MCSamples(samples=[samples[0]], weights=[weights[0]], loglikes=[loglikes[0]],
                                ignore_rows=ignore_rows)
 
             samples = mc.makeSingleSamples(single_thin=single_thin)
+            print(samples.shape)
             samples = samples[:, :self.x_dim]
+            assert samples.shape[1] == self.x_dim
             mean = np.mean(samples, axis=0)
             std = np.std(samples, axis=0)
             samples = (samples - mean) / std
+            self.logger.info('%d new samples' % (len(samples)))
+            if t > 0:
+                allsamples = np.vstack((allsamples, samples))
+                samples = allsamples[int(len(allsamples)//3):,:]
+            else:
+                allsamples = samples
+            self.logger.info('Training for bootstrap iter %d with %d samples' % (t, len(samples)))
+            # Forget the current network
+            self.trainer.init_network()
             self.trainer.train(samples, max_iters=train_iters, noise=-1)
 
             def transform(x):
                 return x * std + mean
 
+        self.logger.info('Sampling...')
         samples, likes, latent, scale, nc = self.trainer.sample(
-            loglike=self.loglike, transform=transform,
+            loglike=self.loglike, transform=transform, init_x=next_start,
             mcmc_steps=mcmc_steps, alpha=alpha, dynamic=False, show_progress=True,
             out_chain=os.path.join(self.logs['chains'], 'chain'))
         samples = transform(samples)

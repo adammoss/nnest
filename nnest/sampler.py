@@ -12,7 +12,7 @@ import json
 
 import numpy as np
 
-from nnest.trainer import Trainer
+from nnest.multitrainer import MultiTrainer as Trainer
 from nnest.utils.logger import create_logger, make_run_dir
 from nnest.utils.evaluation import acceptance_rate, effective_sample_size, mean_jump_distance
 
