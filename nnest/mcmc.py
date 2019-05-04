@@ -48,7 +48,7 @@ class MCMCSampler(Sampler):
         logl = self.loglike(v)
         samples = []
         likes = []
-        for i in range(mcmc_steps):
+        for i in range(mcmc_steps // mcmc_batch_size):
             du = np.random.standard_normal(u.shape) * 0.1
             u_prime = u + du
             v_prime = self.transform(u_prime)
@@ -73,11 +73,13 @@ class MCMCSampler(Sampler):
             u = u_prime * m + u * (1 - m)
             v = v_prime * m + v * (1 - m)
             logl = logl_prime * mask + logl * (1 - mask)
+            assert v.shape[1] == self.x_dim, v.shape
             samples.append(v)
             likes.append(logl)
         samples = np.transpose(np.array(samples), axes=[1, 0, 2])
         loglikes = -np.transpose(np.array(likes), axes=[1, 0])
         weights = np.ones(loglikes.shape)
+        assert samples.shape[-1] == self.x_dim, samples.shape
         self._chain_stats(samples)
         self._save_samples(samples, weights, loglikes)
         names = ['p%i' % i for i in range(int(self.x_dim))]
@@ -109,7 +111,7 @@ class MCMCSampler(Sampler):
             bootstrap_batch_size=5,
             alpha=0,
             single_thin=1,
-            ignore_rows=0.0):
+            ignore_rows=0.3):
 
         if alpha == 0.0:
             alpha = 1 / self.x_dim ** 0.5
@@ -132,7 +134,7 @@ class MCMCSampler(Sampler):
                     loglike=self.loglike, transform=transform,
                     mcmc_steps=bootstrap_mcmc_steps, 
                     alpha=alpha, dynamic=False, show_progress=True,
-                    init_x=next_start)
+                    init_x=next_start, plot=True)
                 next_start = samples[:,-1,:]
                 #next_start = None
                 samples = transform(samples)
@@ -144,7 +146,9 @@ class MCMCSampler(Sampler):
                                ignore_rows=ignore_rows)
 
             samples = mc.makeSingleSamples(single_thin=single_thin)
+            print(samples.shape)
             samples = samples[:, :self.x_dim]
+            assert samples.shape[1] == self.x_dim
             mean = np.mean(samples, axis=0)
             std = np.std(samples, axis=0)
             samples = (samples - mean) / std
