@@ -82,7 +82,8 @@ class CouplingLayer(nn.Module):
                  num_cond_inputs=None,
                  s_act='tanh',
                  t_act='relu',
-                 num_layers=2):
+                 num_layers=2,
+                 device=None):
         super(CouplingLayer, self).__init__()
 
         self.num_inputs = num_inputs
@@ -115,7 +116,7 @@ class CouplingLayer(nn.Module):
 
     def forward(self, inputs, cond_inputs=None, mode='direct'):
         mask = self.mask
-        
+
         masked_inputs = inputs * mask
         if cond_inputs is not None:
             masked_inputs = torch.cat([masked_inputs, cond_inputs], -1)
@@ -180,11 +181,12 @@ class FlowSequential(nn.Sequential):
 
 class SingleSpeed(nn.Module):
 
-    def __init__(self, num_inputs, num_hidden, num_blocks, num_layers):
+    def __init__(self, num_inputs, num_hidden, num_blocks, num_layers, device=None):
         super(SingleSpeed, self).__init__()
-
         mask = torch.arange(0, num_inputs) % 2
         mask = mask.float()
+        if device is not None:
+            mask = mask.to(device)
         modules = []
         for _ in range(num_blocks):
             modules += [
@@ -194,6 +196,8 @@ class SingleSpeed(nn.Module):
             ]
             mask = 1 - mask
         self.net = FlowSequential(*modules)
+        if device is not None:
+            self.net.to(device)
 
     def forward(self, inputs, cond_inputs=None, mode='direct', logdets=None):
         return self.net(inputs, cond_inputs=cond_inputs, mode=mode, logdets=logdets)
@@ -207,7 +211,7 @@ class SingleSpeed(nn.Module):
 
 class FastSlow(nn.Module):
 
-    def __init__(self, num_fast, num_slow, num_hidden, num_blocks, num_layers):
+    def __init__(self, num_fast, num_slow, num_hidden, num_blocks, num_layers, device=None):
         super(FastSlow, self).__init__()
 
         self.num_fast = num_fast
@@ -217,6 +221,8 @@ class FastSlow(nn.Module):
         # Fast block
         mask_fast = torch.arange(0, num_fast) % 2
         mask_fast = mask_fast.float()
+        if device is not None:
+            mask_fast = mask_fast.to(device)
         modules_fast = []
         for _ in range(num_blocks):
             modules_fast += [
@@ -230,6 +236,8 @@ class FastSlow(nn.Module):
         # Slow block
         mask_slow = torch.arange(0, num_slow) % 2
         mask_slow = mask_slow.float()
+        if device is not None:
+            mask_slow = mask_slow.to(device)
         modules_slow = []
         for _ in range(num_blocks):
             modules_slow += [
@@ -243,6 +251,8 @@ class FastSlow(nn.Module):
         # Combine fast and slow such that slow is unnchanged just by updating fast block
         modules = []
         mask = torch.cat((torch.ones(num_slow), torch.zeros(num_fast)))
+        if device is not None:
+            mask = mask.to(device)
         modules = [
             CouplingLayer(
                 num_slow + num_fast, num_hidden, mask, None,

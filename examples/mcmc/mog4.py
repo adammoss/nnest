@@ -65,8 +65,6 @@ def main(args):
 
     from src.mcmc import MCMCSampler
 
-    os.environ['CUDA_VISIBLE_DEVICES'] = ''
-
     g = GaussianMix()
 
     def loglike(z):
@@ -76,7 +74,8 @@ def main(args):
         return 10. * x
 
     sampler = MCMCSampler(args.x_dim, loglike, transform=transform, log_dir=args.log_dir, hidden_dim=args.hidden_dim,
-                          num_layers=args.num_layers, num_blocks=args.num_blocks, num_slow=args.num_slow)
+                          num_layers=args.num_layers, num_blocks=args.num_blocks, num_slow=args.num_slow,
+                          use_gpu=args.use_gpu)
     sampler.run(train_iters=args.train_iters, mcmc_steps=args.mcmc_steps, single_thin=10)
 
 
