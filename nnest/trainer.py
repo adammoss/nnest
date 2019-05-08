@@ -66,9 +66,9 @@ class Trainer(object):
 
         if flow.lower() == 'nvp':
             if nslow > 0:
-                self.netG = FastSlow(nfast, nslow, ndim, num_blocks, num_layers)
+                self.netG = FastSlow(nfast, nslow, ndim, num_blocks, num_layers, device=self.device)
             else:
-                self.netG = SingleSpeed(xdim, ndim, num_blocks, num_layers)
+                self.netG = SingleSpeed(xdim, ndim, num_blocks, num_layers, device=self.device)
         else:
             raise NotImplementedError
 
@@ -100,6 +100,8 @@ class Trainer(object):
         if self.path is not None:
             self.logger.info(self.netG)
             self.writer = SummaryWriter(self.path)
+
+        self.logger.info('Device [%s]' % self.device)
 
     def train(
             self,
@@ -417,8 +419,7 @@ class Trainer(object):
         model.eval()
         with torch.no_grad():
             x_synth = model.sample(dataset.size).detach().cpu().numpy()
-            x_data = torch.from_numpy(dataset).float()
-            z, _ = model(x_data)
+            z, _ = model(torch.from_numpy(dataset).float().to(self.device))
             z = z.detach().cpu().numpy()
             if plot_grid and self.x_dim == 2:
                 grid = []
@@ -429,8 +430,7 @@ class Trainer(object):
                     for x in np.linspace(np.min(dataset[:, 0]), np.max(dataset[:, 0]), 5000):
                         grid.append([x, y])
                 grid = np.array(grid)
-                x_grid = torch.from_numpy(grid).float()
-                z_grid, _ = model(x_grid)
+                z_grid, _ = model(torch.from_numpy(grid).float().to(self.device))
                 z_grid = z_grid.detach().cpu().numpy()
 
         if self.writer is not None:

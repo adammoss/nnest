@@ -10,8 +10,6 @@ sys.path.append(os.getcwd())
 def main(args):
     from nnest.nested import NestedSampler
 
-    os.environ['CUDA_VISIBLE_DEVICES'] = ''
-
     def loglike(z):
         return np.array([-sum(100.0 * (x[1:] - x[:-1] ** 2.0) ** 2.0 + (1 - x[:-1]) ** 2.0) for x in z])
 
@@ -19,7 +17,8 @@ def main(args):
         return 5. * x
 
     sampler = NestedSampler(args.x_dim, loglike, transform=transform, log_dir=args.log_dir, num_live_points=args.num_live_points,
-                            hidden_dim=args.hidden_dim, num_layers=args.num_layers, num_blocks=args.num_blocks, num_slow=args.num_slow)
+                            hidden_dim=args.hidden_dim, num_layers=args.num_layers, num_blocks=args.num_blocks, num_slow=args.num_slow,
+                            use_gpu=args.use_gpu)
     sampler.run(train_iters=args.train_iters, mcmc_steps=args.mcmc_steps, volume_switch=args.switch, noise=args.noise,
                 num_test_samples=args.test_samples, test_mcmc_steps=args.test_mcmc_steps)
 

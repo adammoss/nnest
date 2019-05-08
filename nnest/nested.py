@@ -33,6 +33,7 @@ class NestedSampler(Sampler):
                  num_blocks=5,
                  num_layers=2,
                  log_dir='logs/test',
+                 use_gpu=False,
                  num_live_points=1000
                  ):
 
@@ -42,7 +43,8 @@ class NestedSampler(Sampler):
         super(NestedSampler, self).__init__(x_dim, loglike, transform=transform, append_run_num=append_run_num,
                                             run_num=run_num, hidden_dim=hidden_dim, num_slow=num_slow, 
                                             num_derived=num_derived, batch_size=batch_size, flow=flow,
-                                            num_blocks=num_blocks, num_layers=num_layers, log_dir=log_dir)
+                                            num_blocks=num_blocks, num_layers=num_layers, log_dir=log_dir,
+                                            use_gpu=use_gpu)
 
         if self.log:
             self.logger.info('Num live points [%d]' % (self.num_live_points))
