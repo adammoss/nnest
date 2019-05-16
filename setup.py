@@ -5,7 +5,7 @@ from setuptools import find_packages, setup
 
 setup(
     name = "nnest",
-    version = "0.1.1",
+    version = "0.1.2",
     description = "Neural network nested sampling",
     author = "Adam Moss",
     author_email = "adam.moss@nottingham.ac.uk",
