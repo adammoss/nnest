@@ -83,11 +83,13 @@ class CouplingLayer(nn.Module):
                  s_act='tanh',
                  t_act='relu',
                  num_layers=2,
+                 translate_only=False,
                  device=None):
         super(CouplingLayer, self).__init__()
 
         self.num_inputs = num_inputs
         self.mask = mask
+        self.translate_only = translate_only
 
         activations = {'relu': nn.ReLU, 'sigmoid': nn.Sigmoid, 'tanh': nn.Tanh}
         s_act_func = activations[s_act]
@@ -120,17 +122,22 @@ class CouplingLayer(nn.Module):
         masked_inputs = inputs * mask
         if cond_inputs is not None:
             masked_inputs = torch.cat([masked_inputs, cond_inputs], -1)
-        
-        if mode == 'direct':
-            log_s = self.scale_net(masked_inputs) * (1 - mask)
-            t = self.translate_net(masked_inputs) * (1 - mask)
-            s = torch.exp(log_s)
-            return inputs * s + t, log_s.sum(-1, keepdim=True)
+
+        t = self.translate_net(masked_inputs) * (1 - mask)
+
+        if self.translate_only:
+            if mode == 'direct':
+                return inputs  + t, 0
+            else:
+                return inputs - t, 0
         else:
             log_s = self.scale_net(masked_inputs) * (1 - mask)
-            t = self.translate_net(masked_inputs) * (1 - mask)
-            s = torch.exp(-log_s)
-            return (inputs - t) * s, -log_s.sum(-1, keepdim=True)
+            if mode == 'direct':
+                s = torch.exp(log_s)
+                return inputs * s + t, log_s.sum(-1, keepdim=True)
+            else:
+                s = torch.exp(-log_s)
+                return (inputs - t) * s, -log_s.sum(-1, keepdim=True)
 
 
 class FlowSequential(nn.Sequential):
@@ -181,7 +188,7 @@ class FlowSequential(nn.Sequential):
 
 class SingleSpeed(nn.Module):
 
-    def __init__(self, num_inputs, num_hidden, num_blocks, num_layers, device=None):
+    def __init__(self, num_inputs, num_hidden, num_blocks, num_layers, translate_only=False, device=None):
         super(SingleSpeed, self).__init__()
         mask = torch.arange(0, num_inputs) % 2
         mask = mask.float()
@@ -192,7 +199,7 @@ class SingleSpeed(nn.Module):
             modules += [
                 CouplingLayer(
                     num_inputs, num_hidden, mask, None,
-                    s_act='tanh', t_act='relu', num_layers=num_layers)
+                    s_act='tanh', t_act='relu', num_layers=num_layers, translate_only=translate_only),
             ]
             mask = 1 - mask
         self.net = FlowSequential(*modules)
@@ -211,7 +218,7 @@ class SingleSpeed(nn.Module):
 
 class FastSlow(nn.Module):
 
-    def __init__(self, num_fast, num_slow, num_hidden, num_blocks, num_layers, device=None):
+    def __init__(self, num_fast, num_slow, num_hidden, num_blocks, num_layers, translate_only=False, device=None):
         super(FastSlow, self).__init__()
 
         self.num_fast = num_fast
@@ -228,7 +235,7 @@ class FastSlow(nn.Module):
             modules_fast += [
                 CouplingLayer(
                     num_fast, num_hidden, mask_fast, None,
-                    s_act='tanh', t_act='relu', num_layers=num_layers)
+                    s_act='tanh', t_act='relu', num_layers=num_layers, translate_only=translate_only)
             ]
             mask_fast = 1 - mask_fast
         self.net_fast = FlowSequential(*modules_fast)
@@ -243,7 +250,7 @@ class FastSlow(nn.Module):
             modules_slow += [
                 CouplingLayer(
                     num_slow, num_hidden, mask_slow, None,
-                    s_act='tanh', t_act='relu', num_layers=num_layers)
+                    s_act='tanh', t_act='relu', num_layers=num_layers, translate_only=translate_only)
             ]
             mask_slow = 1 - mask_slow
         self.net_slow = FlowSequential(*modules_slow)
@@ -256,7 +263,7 @@ class FastSlow(nn.Module):
         modules = [
             CouplingLayer(
                 num_slow + num_fast, num_hidden, mask, None,
-                s_act='tanh', t_act='relu', num_layers=num_layers)
+                s_act='tanh', t_act='relu', num_layers=num_layers, translate_only=translate_only)
         ]
         self.net = FlowSequential(*modules)
 

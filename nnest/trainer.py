@@ -36,6 +36,7 @@ class Trainer(object):
                  nslow=0,
                  batch_size=100,
                  flow='nvp',
+                 translate_only=False,
                  num_blocks=5,
                  num_layers=2,
                  oversample_rate=-1,
@@ -66,9 +67,11 @@ class Trainer(object):
 
         if flow.lower() == 'nvp':
             if nslow > 0:
-                self.netG = FastSlow(nfast, nslow, ndim, num_blocks, num_layers, device=self.device)
+                self.netG = FastSlow(nfast, nslow, ndim, num_blocks, num_layers, device=self.device,
+                                     translate_only=translate_only)
             else:
-                self.netG = SingleSpeed(xdim, ndim, num_blocks, num_layers, device=self.device)
+                self.netG = SingleSpeed(xdim, ndim, num_blocks, num_layers, device=self.device,
+                                        translate_only=translate_only)
         else:
             raise NotImplementedError
 
@@ -306,9 +309,9 @@ class Trainer(object):
 
             if dynamic:
                 if accept > reject:
-                    scale *= np.exp(1. / accept)
+                    scale *= np.exp(batch_size / accept)
                 if accept < reject:
-                    scale /= np.exp(1. / reject)
+                    scale /= np.exp(batch_size / reject)
 
             m = mask[:, None].float()
             z = (z_prime * m + z * (1 - m)).detach()
@@ -449,8 +452,8 @@ class Trainer(object):
                 ax[1].scatter(z_grid[:, 0], z_grid[:, 1], c=grid[:, 0], marker='.', s=1, linewidths=0)
             ax[1].scatter(z[:, 0], z[:, 1], s=4)
             ax[1].set_title('Latent data')
-            ax[1].set_xlim([-3, 3])
-            ax[1].set_ylim([-3, 3])
+            ax[1].set_xlim([-np.max(np.abs(z)), np.max(np.abs(z))])
+            ax[1].set_ylim([-np.max(np.abs(z)), np.max(np.abs(z))])
             ax[2].scatter(x_synth[:, 0], x_synth[:, 1], s=2)
             ax[2].set_title('Synthetic data')
             plt.tight_layout()
