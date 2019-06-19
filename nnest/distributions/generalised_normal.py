@@ -7,12 +7,12 @@ from torch.distributions.exp_family import ExponentialFamily
 from torch.distributions.utils import _standard_normal, broadcast_all
 
 
-class GeneralisedGaussian(ExponentialFamily):
+class GeneralisedNormal(ExponentialFamily):
     r"""
     Creates a generalised normal (also called Gaussian) distribution parameterized by
     :attr:`loc` and :attr:`scale` and :attr:`beta`.
     Example::
-        >>> m = GeneralisedGaussian(torch.tensor([0.0]), torch.tensor([1.0]), 2)
+        >>> m = GeneralisedNormal(torch.tensor([0.0]), torch.tensor([1.0]), 2)
     Args:
         loc (float or Tensor): mean of the distribution (often referred to as mu)
         scale (float or Tensor):
@@ -42,7 +42,7 @@ class GeneralisedGaussian(ExponentialFamily):
             batch_shape = torch.Size()
         else:
             batch_shape = self.loc.size()
-        super(GeneralisedGaussian, self).__init__(batch_shape, validate_args=validate_args)
+        super(GeneralisedNormal, self).__init__(batch_shape, validate_args=validate_args)
 
     def expand(self, batch_shape, _instance=None):
         new = self._get_checked_instance(Normal, _instance)

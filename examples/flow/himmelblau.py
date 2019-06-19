@@ -9,7 +9,7 @@ sys.path.append(os.getcwd())
 def main():
 
     from nnest.trainer import Trainer
-    from nnest.distributions.generalised_gaussian import GeneralisedGaussian
+    from nnest.distributions import GeneralisedNormal
 
     def loglike(z):
         z1 = z[:, 0]
@@ -30,7 +30,7 @@ def main():
     idx = np.argsort(-likes)
     samples = x[idx[0:n_samples]]
 
-    base_dist = GeneralisedGaussian(torch.zeros(xdim), torch.ones(xdim), 8)
+    base_dist = GeneralisedNormal(torch.zeros(xdim), torch.ones(xdim), 8)
 
     t = Trainer(xdim, ndim, log_dir='logs/flow/himmelblau',  num_blocks=5, num_layers=2, scale='constant',
                 base_dist=base_dist)
