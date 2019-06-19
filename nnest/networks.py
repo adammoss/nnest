@@ -84,13 +84,13 @@ class CouplingLayer(nn.Module):
                  s_act='tanh',
                  t_act='relu',
                  num_layers=2,
-                 scale='constant',
+                 translate_only=False,
                  device=None):
         super(CouplingLayer, self).__init__()
 
         self.num_inputs = num_inputs
         self.mask = mask
-        self.scale = scale
+        self.translate_only = translate_only
 
         activations = {'relu': nn.ReLU, 'sigmoid': nn.Sigmoid, 'tanh': nn.Tanh}
         s_act_func = activations[s_act]
@@ -101,7 +101,7 @@ class CouplingLayer(nn.Module):
         else:
             total_inputs = num_inputs
 
-        if scale != 'translate' and scale != 'constant':
+        if not translate_only:
             scale_layers = [nn.Linear(total_inputs, num_hidden), s_act_func()]
             for i in range(0, num_layers):
                 scale_layers += [nn.Linear(num_hidden, num_hidden), s_act_func()]
@@ -114,8 +114,6 @@ class CouplingLayer(nn.Module):
         translate_layers += [nn.Linear(num_hidden, num_inputs)]
         self.translate_net = nn.Sequential(*translate_layers)
 
-        self.s = nn.Parameter(torch.tensor(0.0), requires_grad=True)
-            
         def init(m):
             if isinstance(m, nn.Linear):
                 m.bias.data.fill_(0)
@@ -130,18 +128,11 @@ class CouplingLayer(nn.Module):
 
         t = self.translate_net(masked_inputs) * (1 - mask)
 
-        if self.scale == 'translate':
+        if self.translate_only:
             if mode == 'direct':
                 return inputs + t, 0
             else:
                 return inputs - t, 0
-        elif self.scale == 'constant':
-            if mode == 'direct':
-                s = torch.exp(self.s)
-                return inputs * s + t, self.s.sum(-1, keepdim=True)
-            else:
-                s = torch.exp(-self.s)
-                return (inputs - t) * s, -self.s.sum(-1, keepdim=True)
         else:
             log_s = self.scale_net(masked_inputs) * (1 - mask)
             if mode == 'direct':
@@ -150,6 +141,22 @@ class CouplingLayer(nn.Module):
             else:
                 s = torch.exp(-log_s)
                 return (inputs - t) * s, -log_s.sum(-1, keepdim=True)
+
+
+class ScaleLayer(nn.Module):
+
+    def __init__(self):
+        super(ScaleLayer, self).__init__()
+
+        self.scale = nn.Parameter(torch.tensor(0.0), requires_grad=True)
+
+    def forward(self, inputs, cond_inputs=None, mode='direct'):
+        if mode == 'direct':
+            s = torch.exp(self.scale)
+            return inputs * s, self.scale.sum(-1, keepdim=True)
+        else:
+            s = torch.exp(-self.scale)
+            return inputs * s, -self.scale.sum(-1, keepdim=True)
 
 
 class FlowSequential(nn.Sequential):
@@ -203,9 +210,11 @@ class SingleSpeed(nn.Module):
             modules += [
                 CouplingLayer(
                     num_inputs, num_hidden, mask, None,
-                    s_act='tanh', t_act='relu', num_layers=num_layers, scale=scale),
+                    s_act='tanh', t_act='relu', num_layers=num_layers, translate_only=scale == 'translate'),
             ]
             mask = 1 - mask
+        if scale == 'constant':
+            modules += [ScaleLayer()]
         self.net = FlowSequential(*modules)
         if device is not None:
             self.net.to(device)
@@ -220,7 +229,7 @@ class SingleSpeed(nn.Module):
 
     def sample(self, num_samples=None, noise=None, cond_inputs=None):
         if noise is None:
-            noise = torch.Tensor(num_samples, self.num_inputs).normal_()
+            noise = self.base_dist.sample((num_samples,))
         device = next(self.parameters()).device
         noise = noise.to(device)
         if cond_inputs is not None:
@@ -302,3 +311,5 @@ class FastSlow(SingleSpeed):
         log_probs = (-0.5 * u.pow(2) - 0.5 * math.log(2 * math.pi)).sum(
             -1, keepdim=True)
         return (log_probs + log_jacob + logdets_slow + logdets_fast).sum(-1, keepdim=True)
+
+

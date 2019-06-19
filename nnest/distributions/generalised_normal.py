@@ -5,6 +5,7 @@ import torch
 from torch.distributions import constraints
 from torch.distributions.exp_family import ExponentialFamily
 from torch.distributions.utils import _standard_normal, broadcast_all
+from scipy.stats import gennorm
 
 
 class GeneralisedNormal(ExponentialFamily):
@@ -56,7 +57,7 @@ class GeneralisedNormal(ExponentialFamily):
     def sample(self, sample_shape=torch.Size()):
         shape = self._extended_shape(sample_shape)
         with torch.no_grad():
-            return torch.normal(self.loc.expand(shape), self.scale.expand(shape))
+            return torch.tensor(gennorm.rvs(self.beta, size=shape), dtype=torch.float32, device=self.loc.device)
 
     def rsample(self, sample_shape=torch.Size()):
         shape = self._extended_shape(sample_shape)

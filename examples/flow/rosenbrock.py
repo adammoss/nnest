@@ -28,7 +28,7 @@ def main():
     idx = np.argsort(-likes)
     samples = x[idx[0:n_samples]]
 
-    base_dist = GeneralisedNormal(torch.zeros(xdim), torch.ones(xdim), 8)
+    base_dist = GeneralisedNormal(torch.zeros(xdim), torch.ones(xdim), 10)
 
     t = Trainer(xdim, ndim, log_dir='logs/flow/rosenbrock',  num_blocks=5, num_layers=2, scale='constant',
                 base_dist=base_dist)
