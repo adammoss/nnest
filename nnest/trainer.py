@@ -36,9 +36,10 @@ class Trainer(object):
                  nslow=0,
                  batch_size=100,
                  flow='nvp',
-                 translate_only=False,
+                 scale='constant',
                  num_blocks=5,
                  num_layers=2,
+                 base_dist=None,
                  oversample_rate=-1,
                  train=True,
                  load_model='',
@@ -68,10 +69,10 @@ class Trainer(object):
         if flow.lower() == 'nvp':
             if nslow > 0:
                 self.netG = FastSlow(nfast, nslow, ndim, num_blocks, num_layers, device=self.device,
-                                     translate_only=translate_only)
+                                     scale=scale, base_dist=base_dist)
             else:
                 self.netG = SingleSpeed(xdim, ndim, num_blocks, num_layers, device=self.device,
-                                        translate_only=translate_only)
+                                        scale=scale, base_dist=base_dist)
         else:
             raise NotImplementedError
 

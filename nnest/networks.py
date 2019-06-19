@@ -10,6 +10,7 @@ import math
 
 import torch
 import torch.nn as nn
+from torch import distributions
 
 
 class BatchNormFlow(nn.Module):
@@ -83,13 +84,13 @@ class CouplingLayer(nn.Module):
                  s_act='tanh',
                  t_act='relu',
                  num_layers=2,
-                 translate_only=False,
+                 scale='constant',
                  device=None):
         super(CouplingLayer, self).__init__()
 
         self.num_inputs = num_inputs
         self.mask = mask
-        self.translate_only = translate_only
+        self.scale = scale
 
         activations = {'relu': nn.ReLU, 'sigmoid': nn.Sigmoid, 'tanh': nn.Tanh}
         s_act_func = activations[s_act]
@@ -99,17 +100,21 @@ class CouplingLayer(nn.Module):
             total_inputs = num_inputs + num_cond_inputs
         else:
             total_inputs = num_inputs
-        
-        scale_layers = [nn.Linear(total_inputs, num_hidden), s_act_func()]
-        for i in range(0, num_layers):
-            scale_layers += [nn.Linear(num_hidden, num_hidden), s_act_func()]
-        scale_layers += [nn.Linear(num_hidden, num_inputs)]
-        self.scale_net = nn.Sequential(*scale_layers)
+
+        if scale != 'translate' and scale != 'constant':
+            scale_layers = [nn.Linear(total_inputs, num_hidden), s_act_func()]
+            for i in range(0, num_layers):
+                scale_layers += [nn.Linear(num_hidden, num_hidden), s_act_func()]
+            scale_layers += [nn.Linear(num_hidden, num_inputs)]
+            self.scale_net = nn.Sequential(*scale_layers)
+
         translate_layers = [nn.Linear(total_inputs, num_hidden), t_act_func()]
         for i in range(0, num_layers):
             translate_layers += [nn.Linear(num_hidden, num_hidden), t_act_func()]
         translate_layers += [nn.Linear(num_hidden, num_inputs)]
         self.translate_net = nn.Sequential(*translate_layers)
+
+        self.s = nn.Parameter(torch.tensor(0.0), requires_grad=True)
             
         def init(m):
             if isinstance(m, nn.Linear):
@@ -125,11 +130,18 @@ class CouplingLayer(nn.Module):
 
         t = self.translate_net(masked_inputs) * (1 - mask)
 
-        if self.translate_only:
+        if self.scale == 'translate':
             if mode == 'direct':
-                return inputs  + t, 0
+                return inputs + t, 0
             else:
                 return inputs - t, 0
+        elif self.scale == 'constant':
+            if mode == 'direct':
+                s = torch.exp(self.s)
+                return inputs * s + t, self.s.sum(-1, keepdim=True)
+            else:
+                s = torch.exp(-self.s)
+                return (inputs - t) * s, -self.s.sum(-1, keepdim=True)
         else:
             log_s = self.scale_net(masked_inputs) * (1 - mask)
             if mode == 'direct':
@@ -152,7 +164,6 @@ class FlowSequential(nn.Sequential):
             inputs: a tuple of inputs and logdets
             mode: to run direct computation or inverse
         """
-        self.num_inputs = inputs.size(-1)
 
         if logdets is None:
             logdets = torch.zeros(inputs.size(0), 1, device=inputs.device)
@@ -169,10 +180,42 @@ class FlowSequential(nn.Sequential):
 
         return inputs, logdets
 
+
+class SingleSpeed(nn.Module):
+
+    def __init__(self, num_inputs, num_hidden, num_blocks, num_layers, scale='constant',
+                 base_dist=None, device=None):
+        super(SingleSpeed, self).__init__()
+
+        self.num_inputs = num_inputs
+
+        if base_dist is None:
+            self.base_dist = distributions.MultivariateNormal(torch.zeros(num_inputs), torch.eye(num_inputs))
+        else:
+            self.base_dist = base_dist
+
+        mask = torch.arange(0, num_inputs) % 2
+        mask = mask.float()
+        if device is not None:
+            mask = mask.to(device)
+        modules = []
+        for _ in range(num_blocks):
+            modules += [
+                CouplingLayer(
+                    num_inputs, num_hidden, mask, None,
+                    s_act='tanh', t_act='relu', num_layers=num_layers, scale=scale),
+            ]
+            mask = 1 - mask
+        self.net = FlowSequential(*modules)
+        if device is not None:
+            self.net.to(device)
+
+    def forward(self, inputs, cond_inputs=None, mode='direct', logdets=None):
+        return self.net(inputs, cond_inputs=cond_inputs, mode=mode, logdets=logdets)
+
     def log_probs(self, inputs, cond_inputs=None):
-        u, log_jacob = self(inputs, cond_inputs)
-        log_probs = (-0.5 * u.pow(2) - 0.5 * math.log(2 * math.pi)).sum(
-            -1, keepdim=True)
+        u, log_jacob = self.net(inputs, cond_inputs)
+        log_probs = self.base_dist.log_prob(u).unsqueeze(1)
         return (log_probs + log_jacob).sum(-1, keepdim=True)
 
     def sample(self, num_samples=None, noise=None, cond_inputs=None):
@@ -186,39 +229,10 @@ class FlowSequential(nn.Sequential):
         return samples
 
 
-class SingleSpeed(nn.Module):
+class FastSlow(SingleSpeed):
 
-    def __init__(self, num_inputs, num_hidden, num_blocks, num_layers, translate_only=False, device=None):
-        super(SingleSpeed, self).__init__()
-        mask = torch.arange(0, num_inputs) % 2
-        mask = mask.float()
-        if device is not None:
-            mask = mask.to(device)
-        modules = []
-        for _ in range(num_blocks):
-            modules += [
-                CouplingLayer(
-                    num_inputs, num_hidden, mask, None,
-                    s_act='tanh', t_act='relu', num_layers=num_layers, translate_only=translate_only),
-            ]
-            mask = 1 - mask
-        self.net = FlowSequential(*modules)
-        if device is not None:
-            self.net.to(device)
-
-    def forward(self, inputs, cond_inputs=None, mode='direct', logdets=None):
-        return self.net(inputs, cond_inputs=cond_inputs, mode=mode, logdets=logdets)
-
-    def log_probs(self, inputs, cond_inputs=None):
-        return self.net.log_probs(inputs, cond_inputs=None)
-
-    def sample(self, num_samples=None, noise=None, cond_inputs=None):
-        return self.net.sample(num_samples=num_samples, noise=noise, cond_inputs=cond_inputs)
-
-
-class FastSlow(nn.Module):
-
-    def __init__(self, num_fast, num_slow, num_hidden, num_blocks, num_layers, translate_only=False, device=None):
+    def __init__(self, num_fast, num_slow, num_hidden, num_blocks, num_layers, scale='constant',
+                 base_dist=None, device=None):
         super(FastSlow, self).__init__()
 
         self.num_fast = num_fast
@@ -235,7 +249,7 @@ class FastSlow(nn.Module):
             modules_fast += [
                 CouplingLayer(
                     num_fast, num_hidden, mask_fast, None,
-                    s_act='tanh', t_act='relu', num_layers=num_layers, translate_only=translate_only)
+                    s_act='tanh', t_act='relu', num_layers=num_layers, scale=scale)
             ]
             mask_fast = 1 - mask_fast
         self.net_fast = FlowSequential(*modules_fast)
@@ -250,20 +264,19 @@ class FastSlow(nn.Module):
             modules_slow += [
                 CouplingLayer(
                     num_slow, num_hidden, mask_slow, None,
-                    s_act='tanh', t_act='relu', num_layers=num_layers, translate_only=translate_only)
+                    s_act='tanh', t_act='relu', num_layers=num_layers, scale=scale)
             ]
             mask_slow = 1 - mask_slow
         self.net_slow = FlowSequential(*modules_slow)
 
         # Combine fast and slow such that slow is unnchanged just by updating fast block
-        modules = []
         mask = torch.cat((torch.ones(num_slow), torch.zeros(num_fast)))
         if device is not None:
             mask = mask.to(device)
         modules = [
             CouplingLayer(
                 num_slow + num_fast, num_hidden, mask, None,
-                s_act='tanh', t_act='relu', num_layers=num_layers, translate_only=translate_only)
+                s_act='tanh', t_act='relu', num_layers=num_layers, scale=scale)
         ]
         self.net = FlowSequential(*modules)
 
@@ -289,13 +302,3 @@ class FastSlow(nn.Module):
         log_probs = (-0.5 * u.pow(2) - 0.5 * math.log(2 * math.pi)).sum(
             -1, keepdim=True)
         return (log_probs + log_jacob + logdets_slow + logdets_fast).sum(-1, keepdim=True)
-
-    def sample(self, num_samples=None, noise=None, cond_inputs=None):
-        if noise is None:
-            noise = torch.Tensor(num_samples, self.num_inputs).normal_()
-        device = next(self.parameters()).device
-        noise = noise.to(device)
-        if cond_inputs is not None:
-            cond_inputs = cond_inputs.to(device)
-        samples = self.forward(noise, cond_inputs, mode='inverse')[0]
-        return samples
