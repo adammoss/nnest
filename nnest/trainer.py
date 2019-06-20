@@ -36,7 +36,7 @@ class Trainer(object):
                  nslow=0,
                  batch_size=100,
                  flow='nvp',
-                 scale='constant',
+                 scale='',
                  num_blocks=5,
                  num_layers=2,
                  base_dist=None,

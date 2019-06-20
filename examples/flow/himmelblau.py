@@ -32,9 +32,9 @@ def main():
 
     base_dist = GeneralisedNormal(torch.zeros(xdim), torch.ones(xdim), 8)
 
-    t = Trainer(xdim, ndim, log_dir='logs/flow/himmelblau',  num_blocks=5, num_layers=2, scale='constant',
-                base_dist=base_dist)
-    t.train(samples, max_iters=1000)
+    t = Trainer(xdim, ndim, log_dir='logs/flow/himmelblau',  num_blocks=5, num_layers=2,
+                base_dist=base_dist, scale='constant')
+    t.train(samples, max_iters=2000)
 
 
 if __name__ == '__main__':

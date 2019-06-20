@@ -190,7 +190,7 @@ class FlowSequential(nn.Sequential):
 
 class SingleSpeed(nn.Module):
 
-    def __init__(self, num_inputs, num_hidden, num_blocks, num_layers, scale='constant',
+    def __init__(self, num_inputs, num_hidden, num_blocks, num_layers, scale='',
                  base_dist=None, device=None):
         super(SingleSpeed, self).__init__()
 
@@ -201,6 +201,8 @@ class SingleSpeed(nn.Module):
         else:
             self.base_dist = base_dist
 
+        translate_only = scale == 'translate' or scale == 'constant'
+
         mask = torch.arange(0, num_inputs) % 2
         mask = mask.float()
         if device is not None:
@@ -210,11 +212,11 @@ class SingleSpeed(nn.Module):
             modules += [
                 CouplingLayer(
                     num_inputs, num_hidden, mask, None,
-                    s_act='tanh', t_act='relu', num_layers=num_layers, translate_only=scale == 'translate'),
+                    s_act='tanh', t_act='relu', num_layers=num_layers, translate_only=translate_only),
             ]
+            if scale == 'constant':
+                modules += [ScaleLayer()]
             mask = 1 - mask
-        if scale == 'constant':
-            modules += [ScaleLayer()]
         self.net = FlowSequential(*modules)
         if device is not None:
             self.net.to(device)
@@ -240,7 +242,7 @@ class SingleSpeed(nn.Module):
 
 class FastSlow(SingleSpeed):
 
-    def __init__(self, num_fast, num_slow, num_hidden, num_blocks, num_layers, scale='constant',
+    def __init__(self, num_fast, num_slow, num_hidden, num_blocks, num_layers, scale='',
                  base_dist=None, device=None):
         super(FastSlow, self).__init__()
 
