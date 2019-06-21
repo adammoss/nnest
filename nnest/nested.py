@@ -188,9 +188,7 @@ class NestedSampler(Sampler):
                 #    if logl > loglstar:
                 #        break
 
-                u, v, logl, nc = self.trainer.rejection_sample(self.loglike, loglstar)
-
-                print(u, v, nc)
+                u, logl, nc = self.trainer.rejection_sample(self.loglike, loglstar, init_x=active_u, max_prior=1)
 
                 if nc > mcmc_steps:
                     rejection_sample = False
