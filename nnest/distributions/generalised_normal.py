@@ -58,7 +58,7 @@ class GeneralisedNormal(ExponentialFamily):
             self._validate_sample(value)
         log_scale = math.log(self.scale) if isinstance(self.scale, Number) else self.scale.log()
         log_beta = math.log(self.beta) if isinstance(self.beta, Number) else self.beta.log()
-        log_gamma = math.log(1.0 / self.beta) if isinstance(self.beta, Number) else torch.mvlgamma(1.0 / beta, 1)
+        log_gamma = math.log(1.0 / self.beta) if isinstance(self.beta, Number) else torch.mvlgamma(1.0 / self.beta, 1)
         return -((torch.abs(value - self.loc) / (self.scale)) ** self.beta) + log_beta - log_scale - math.log(2) - log_gamma
 
     def cdf(self, value):

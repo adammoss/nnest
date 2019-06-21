@@ -184,13 +184,37 @@ class Trainer(object):
 
         self.netG.load_state_dict(best_model.state_dict())
 
-    def sample(
+    def rejection_sample(
             self,
+            loglike,
+            loglstar,
+            transform=None):
+
+        self.netG.eval()
+
+        if transform is None:
+            def transform(x): return x
+
+        nc = 0
+        while True:
+            z = 2 * (np.random.uniform(size=(1, self.x_dim)) - 0.5)
+            u, _ = self.netG(torch.from_numpy(z).float().to(self.device), mode='inverse')
+            u = u.detach().cpu().numpy()
+            v = transform(u)
+            logl = loglike(v)
+            nc += 1
+            if logl > loglstar:
+                break
+
+        return u, v, logl, nc
+
+    def mcmc_sample(
+            self,
+            loglike,
             mcmc_steps=20,
             alpha=1.0,
             dynamic=True,
             batch_size=1,
-            loglike=None,
             init_x=None,
             logl=None,
             loglstar=None,

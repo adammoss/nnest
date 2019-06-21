@@ -34,6 +34,8 @@ class Sampler(object):
                  num_layers=2,
                  log_dir='logs/test',
                  use_gpu=False,
+                 base_dist=None,
+                 scale=''
                  ):
 
         self.x_dim = x_dim
@@ -97,7 +99,9 @@ class Sampler(object):
                 num_layers=num_layers,
                 log_dir=log_dir,
                 log=self.log,
-                use_gpu=use_gpu)
+                use_gpu=use_gpu,
+                base_dist=base_dist,
+                scale=scale)
 
     def _save_params(self, my_dict):
         my_dict = {k: str(v) for k, v in my_dict.items()}

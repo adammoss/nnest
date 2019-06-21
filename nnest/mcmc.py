@@ -34,6 +34,8 @@ class MCMCSampler(Sampler):
                  num_blocks=5,
                  num_layers=2,
                  log_dir='logs/test',
+                 base_dist=None,
+                 scale='',
                  use_gpu=False):
 
         self.sampler = 'mcmc'
@@ -42,7 +44,7 @@ class MCMCSampler(Sampler):
                                           run_num=run_num, hidden_dim=hidden_dim, num_slow=num_slow, 
                                           num_derived=num_derived, batch_size=batch_size, flow=flow,
                                           num_blocks=num_blocks, num_layers=num_layers, log_dir=log_dir,
-                                          use_gpu=use_gpu)
+                                          use_gpu=use_gpu, base_dist=base_dist, scale=scale)
 
     def _init_samples(self, mcmc_steps=5000, mcmc_batch_size=5, ignore_rows=0.3):
         u = 2 * (np.random.uniform(size=(mcmc_batch_size, self.x_dim)) - 0.5)
@@ -128,8 +130,8 @@ class MCMCSampler(Sampler):
                     mc = self._init_samples(mcmc_steps=bootstrap_mcmc_steps, mcmc_batch_size=bootstrap_batch_size,
                                             ignore_rows=ignore_rows)
             else:
-                samples, likes, latent, scale, nc = self.trainer.sample(
-                    loglike=self.loglike, transform=transform,
+                samples, likes, latent, scale, nc = self.trainer.mcmc_sample(
+                    self.loglike, transform=transform,
                     mcmc_steps=bootstrap_mcmc_steps, alpha=alpha, dynamic=False, show_progress=True)
                 samples = transform(samples)
                 self._chain_stats(samples)
@@ -148,8 +150,8 @@ class MCMCSampler(Sampler):
             def transform(x):
                 return x * std + mean
 
-        samples, likes, latent, scale, nc = self.trainer.sample(
-            loglike=self.loglike, transform=transform,
+        samples, likes, latent, scale, nc = self.trainer.mcmc_sample(
+            self.loglike, transform=transform,
             mcmc_steps=mcmc_steps, alpha=alpha, dynamic=False, show_progress=True,
             out_chain=os.path.join(self.logs['chains'], 'chain'))
         samples = transform(samples)

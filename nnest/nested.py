@@ -34,6 +34,8 @@ class NestedSampler(Sampler):
                  num_layers=2,
                  log_dir='logs/test',
                  use_gpu=False,
+                 base_dist=None,
+                 scale='',
                  num_live_points=1000
                  ):
 
@@ -44,7 +46,7 @@ class NestedSampler(Sampler):
                                             run_num=run_num, hidden_dim=hidden_dim, num_slow=num_slow, 
                                             num_derived=num_derived, batch_size=batch_size, flow=flow,
                                             num_blocks=num_blocks, num_layers=num_layers, log_dir=log_dir,
-                                            use_gpu=use_gpu)
+                                            use_gpu=use_gpu, base_dist=base_dist, scale=scale)
 
         if self.log:
             self.logger.info('Num live points [%d]' % (self.num_live_points))
@@ -134,6 +136,7 @@ class NestedSampler(Sampler):
         ncall = self.num_live_points  # number of calls we already made
         first_time = True
         nb = self.mpi_size * mcmc_batch_size
+        rejection_sample = True
 
         for it in range(0, max_iters):
 
@@ -156,17 +159,42 @@ class NestedSampler(Sampler):
             # The new likelihood constraint is that of the worst object.
             loglstar = active_logl[worst]
 
-            if expected_vol > volume_switch:
+            # Train flow
+            if first_time or it % update_interval == 0:
+                self.trainer.train(active_u, max_iters=train_iters, noise=noise)
+                if num_test_samples > 0:
+                    # Test multiple chains from worst point to check mixing
+                    init_x = np.concatenate(
+                        [active_u[worst:worst + 1, :] for i in range(num_test_samples)])
+                    logl = np.concatenate(
+                        [active_logl[worst:worst + 1] for i in range(num_test_samples)])
+                    test_samples, _, _, scale, _ = self.trainer.mcmc_sample(
+                        self.loglike, init_x=init_x, logl=logl, loglstar=loglstar,
+                        transform=self.transform, mcmc_steps=test_mcmc_steps + test_mcmc_burn_in,
+                        max_prior=1, alpha=alpha)
+                    np.save(os.path.join(self.logs['chains'], 'test_samples.npy'), test_samples)
+                    self._chain_stats(test_samples, mean=np.mean(active_u, axis=0), std=np.std(active_u, axis=0))
+                first_time = False
 
-                nc = 0
+            if rejection_sample:
+
+                #nc = 0
                 # Simple rejection sampling over prior
-                while True:
-                    u = 2 * (np.random.uniform(size=(1, self.x_dim)) - 0.5)
-                    v = self.transform(u)
-                    logl = self.loglike(v)
-                    nc += 1
-                    if logl > loglstar:
-                        break
+                #while True:
+                #    u = 2 * (np.random.uniform(size=(1, self.x_dim)) - 0.5)
+                #    v = self.transform(u)
+                #    logl = self.loglike(v)
+                #    nc += 1
+                #    if logl > loglstar:
+                #        break
+
+                u, v, logl, nc = self.trainer.rejection_sample(self.loglike, loglstar)
+
+                print(u, v, nc)
+
+                if nc > mcmc_steps:
+                    rejection_sample = False
+
                 if self.use_mpi:
                     recv_samples = self.comm.gather(u, root=0)
                     recv_likes = self.comm.gather(logl, root=0)
@@ -193,23 +221,6 @@ class NestedSampler(Sampler):
 
             else:
 
-                # MCMC
-                if first_time or it % update_interval == 0:
-                    self.trainer.train(active_u, max_iters=train_iters, noise=noise)
-                    if num_test_samples > 0:
-                        # Test multiple chains from worst point to check mixing
-                        init_x = np.concatenate(
-                            [active_u[worst:worst + 1, :] for i in range(num_test_samples)])
-                        logl = np.concatenate(
-                            [active_logl[worst:worst + 1] for i in range(num_test_samples)])
-                        test_samples, _, _, scale, _ = self.trainer.sample(
-                            loglike=self.loglike, init_x=init_x, logl=logl, loglstar=loglstar,
-                            transform=self.transform, mcmc_steps=test_mcmc_steps + test_mcmc_burn_in,
-                            max_prior=1, alpha=alpha)
-                        np.save(os.path.join(self.logs['chains'], 'test_samples.npy'), test_samples)
-                        self._chain_stats(test_samples, mean=np.mean(active_u, axis=0), std=np.std(active_u, axis=0))
-                    first_time = False
-
                 accept = False
                 while not accept:
                     if nb == self.mpi_size * mcmc_batch_size:
@@ -219,8 +230,8 @@ class NestedSampler(Sampler):
                             low=0, high=self.num_live_points, size=mcmc_batch_size)
                         init_x = active_u[idx, :]
                         logl = active_logl[idx]
-                        samples, likes, latent, scale, nc = self.trainer.sample(
-                            loglike=self.loglike, init_x=init_x, logl=logl, loglstar=loglstar,
+                        samples, likes, latent, scale, nc = self.trainer.mcmc_sample(
+                            self.loglike, init_x=init_x, logl=logl, loglstar=loglstar,
                             transform=self.transform, mcmc_steps=mcmc_steps + mcmc_burn_in,
                             max_prior=1, alpha=alpha)
                         if self.use_mpi:
