@@ -45,48 +45,34 @@ class GeneralisedNormal(ExponentialFamily):
             batch_shape = self.loc.size()
         super(GeneralisedNormal, self).__init__(batch_shape, validate_args=validate_args)
 
-    def expand(self, batch_shape, _instance=None):
-        new = self._get_checked_instance(Normal, _instance)
-        batch_shape = torch.Size(batch_shape)
-        new.loc = self.loc.expand(batch_shape)
-        new.scale = self.scale.expand(batch_shape)
-        super(Normal, new).__init__(batch_shape, validate_args=False)
-        new._validate_args = self._validate_args
-        return new
-
     def sample(self, sample_shape=torch.Size()):
         shape = self._extended_shape(sample_shape)
         with torch.no_grad():
             return torch.tensor(gennorm.rvs(self.beta, size=shape), dtype=torch.float32, device=self.loc.device)
 
     def rsample(self, sample_shape=torch.Size()):
-        shape = self._extended_shape(sample_shape)
-        eps = _standard_normal(shape, dtype=self.loc.dtype, device=self.loc.device)
-        return self.loc + eps * self.scale
+        raise NotImplementedError
 
     def log_prob(self, value):
         if self._validate_args:
             self._validate_sample(value)
         log_scale = math.log(self.scale) if isinstance(self.scale, Number) else self.scale.log()
         log_beta = math.log(self.beta) if isinstance(self.beta, Number) else self.beta.log()
-        return -((torch.abs(value - self.loc) / (self.scale)) ** self.beta) + log_beta - log_scale - math.log(2)
+        log_gamma = math.log(1.0 / self.beta) if isinstance(self.beta, Number) else torch.mvlgamma(1.0 / beta, 1)
+        return -((torch.abs(value - self.loc) / (self.scale)) ** self.beta) + log_beta - log_scale - math.log(2) - log_gamma
 
     def cdf(self, value):
-        if self._validate_args:
-            self._validate_sample(value)
-        return 0.5 * (1 + torch.erf((value - self.loc) * self.scale.reciprocal() / math.sqrt(2)))
+        raise NotImplementedError
 
     def icdf(self, value):
-        if self._validate_args:
-            self._validate_sample(value)
-        return self.loc + self.scale * torch.erfinv(2 * value - 1) * math.sqrt(2)
+        raise NotImplementedError
 
     def entropy(self):
-        return 0.5 + 0.5 * math.log(2 * math.pi) + torch.log(self.scale)
+        raise NotImplementedError
 
     @property
     def _natural_params(self):
-        return (self.loc / self.scale.pow(2), -0.5 * self.scale.pow(2).reciprocal())
+        raise NotImplementedError
 
     def _log_normalizer(self, x, y):
-        return -0.25 * x.pow(2) / y + 0.5 * torch.log(-math.pi / y)
+        raise NotImplementedError
