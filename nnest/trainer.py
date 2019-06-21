@@ -114,7 +114,8 @@ class Trainer(object):
             log_interval=50,
             save_interval=50,
             noise=0.0,
-            validation_fraction=0.1):
+            validation_fraction=0.1,
+            patience=50):
 
         start_time = time.time()
 
@@ -154,6 +155,8 @@ class Trainer(object):
         best_validation_epoch = 0
         best_model = copy.deepcopy(self.netG)
 
+        counter = 0
+
         for epoch in range(1, max_iters + 1):
 
             self.total_iters += 1
@@ -166,6 +169,7 @@ class Trainer(object):
                 best_validation_epoch = epoch
                 best_validation_loss = validation_loss
                 best_model = copy.deepcopy(self.netG)
+                counter = 0
 
             if epoch == 1 or epoch % log_interval == 0:
                 self.logger.info('Epoch [%i] train loss [%5.4f] validation loss [%5.4f]' % (
@@ -179,6 +183,12 @@ class Trainer(object):
                         os.path.join(self.path, 'models', 'netG.pt')
                     )
                     self._train_plot(self.netG, samples)
+
+            counter += 1
+
+            if counter > patience:
+                self.logger.info('Epoch [%i] ran out of patience' % (epoch))
+                break
 
         self.logger.info('Best epoch [%i] validation loss [%5.4f]' % (best_validation_epoch, best_validation_loss))
 
