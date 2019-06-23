@@ -70,7 +70,7 @@ class NestedSampler(Sampler):
             volume_switch=0,
             alpha=0.0,
             noise=-1.0,
-            num_test_samples=0,
+            num_test_mcmc_samples=0,
             test_mcmc_steps=1000,
             test_mcmc_burn_in=0):
 
@@ -137,6 +137,7 @@ class NestedSampler(Sampler):
         first_time = True
         nb = self.mpi_size * mcmc_batch_size
         rejection_sample = True
+        ncs = []
 
         for it in range(0, max_iters):
 
@@ -162,12 +163,12 @@ class NestedSampler(Sampler):
             # Train flow
             if first_time or it % update_interval == 0:
                 self.trainer.train(active_u, max_iters=train_iters, noise=noise)
-                if num_test_samples > 0:
+                if num_test_mcmc_samples > 0:
                     # Test multiple chains from worst point to check mixing
                     init_x = np.concatenate(
-                        [active_u[worst:worst + 1, :] for i in range(num_test_samples)])
+                        [active_u[worst:worst + 1, :] for i in range(num_test_mcmc_samples)])
                     logl = np.concatenate(
-                        [active_logl[worst:worst + 1] for i in range(num_test_samples)])
+                        [active_logl[worst:worst + 1] for i in range(num_test_mcmc_samples)])
                     test_samples, _, _, scale, _ = self.trainer.mcmc_sample(
                         self.loglike, init_x=init_x, logl=logl, loglstar=loglstar,
                         transform=self.transform, mcmc_steps=test_mcmc_steps + test_mcmc_burn_in,
@@ -178,19 +179,13 @@ class NestedSampler(Sampler):
 
             if rejection_sample:
 
-                #nc = 0
-                # Simple rejection sampling over prior
-                #while True:
-                #    u = 2 * (np.random.uniform(size=(1, self.x_dim)) - 0.5)
-                #    v = self.transform(u)
-                #    logl = self.loglike(v)
-                #    nc += 1
-                #    if logl > loglstar:
-                #        break
+                # Rejection sampling
 
-                u, logl, nc = self.trainer.rejection_sample(self.loglike, loglstar, init_x=active_u, max_prior=1)
-
-                if nc > mcmc_steps:
+                u, logl, nc = self.trainer.rejection_sample(self.loglike, loglstar, transform=self.transform,
+                                                            init_x=active_u, max_prior=1)
+                ncs.append(nc)
+                mean_calls = np.mean(ncs[-10:])
+                if mean_calls > mcmc_steps:
                     rejection_sample = False
 
                 if self.use_mpi:
@@ -214,10 +209,12 @@ class NestedSampler(Sampler):
 
                 if it % log_interval == 0 and self.log:
                     self.logger.info(
-                        'Step [%d] loglstar [%5.4f] max logl [%5.4f] logz [%5.4f] vol [%6.5f] ncalls [%d]]' %
-                        (it, loglstar, np.max(active_logl), logz, expected_vol, ncall))
+                        'Step [%d] loglstar [%5.4f] max logl [%5.4f] logz [%5.4f] vol [%6.5f] ncalls [%d] mean calls [%5.4f]' %
+                        (it, loglstar, np.max(active_logl), logz, expected_vol, ncall, mean_calls))
 
             else:
+
+                # MCMC sampling
 
                 accept = False
                 while not accept:

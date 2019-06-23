@@ -27,7 +27,7 @@ def main(args):
                             hidden_dim=args.hidden_dim, num_layers=args.num_layers, num_blocks=args.num_blocks, num_slow=args.num_slow,
                             use_gpu=args.use_gpu, base_dist=base_dist, scale=args.scale)
     sampler.run(train_iters=args.train_iters, mcmc_steps=args.mcmc_steps, volume_switch=args.switch, noise=args.noise,
-                num_test_samples=args.test_samples, test_mcmc_steps=args.test_mcmc_steps, update_interval=100)
+                num_test_mcmc_samples=args.test_samples, test_mcmc_steps=args.test_mcmc_steps)
 
 
 if __name__ == '__main__':
@@ -35,7 +35,7 @@ if __name__ == '__main__':
 
     parser.add_argument('--x_dim', type=int, default=2,
                         help="Dimensionality")
-    parser.add_argument('--train_iters', type=int, default=50,
+    parser.add_argument('--train_iters', type=int, default=2000,
                         help="number of train iters")
     parser.add_argument("--mcmc_steps", type=int, default=0)
     parser.add_argument("--num_live_points", type=int, default=1000)

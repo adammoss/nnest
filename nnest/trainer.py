@@ -201,7 +201,7 @@ class Trainer(object):
             init_x=None,
             transform=None,
             max_prior=None,
-            efficency_factor=0.3):
+            efficency_factor=1.0):
 
         self.netG.eval()
 
@@ -210,27 +210,34 @@ class Trainer(object):
 
         if init_x is not None:
             z, log_det_J = self.netG(torch.from_numpy(init_x).float().to(self.device))
-            # We want max det dx/dz to get envelope for rejection sampling
+            # We want max det dx/dz to set envelope for rejection sampling
             m = torch.max(-log_det_J)
+            z = z.detach().cpu().numpy()
+            r = np.max(np.linalg.norm(z, axis=1))
+        else:
+            r = 1
+
+        enlargement = (1 / efficency_factor)**(1 / self.x_dim)
 
         nc = 0
         while True:
             z = 2 * (np.random.uniform(size=(1, self.x_dim)) - 0.5)
-            z = z * (1 / efficency_factor)**(1 / self.x_dim)
+            z = z * enlargement
+            z = np.random.randn(self.x_dim)
+            z = enlargement * r * z * np.random.rand() ** (1. / self.x_dim) / np.sqrt(np.sum(z ** 2))
+            z = np.expand_dims(z, 0)
             x, log_det_J = self.netG(torch.from_numpy(z).float().to(self.device), mode='inverse')
             delta_log_det_J = (log_det_J - m).detach()
             log_ratio_1 = delta_log_det_J.squeeze(dim=1)
             x = x.detach().cpu().numpy()
 
             # Check not out of prior range
-            if max_prior is not None:
-                idx = np.where(np.any(np.abs(x) > max_prior))
-                log_ratio_1[idx] = -np.inf
+            if np.any(np.abs(x) > max_prior):
+                continue
 
             logl = loglike(transform(x))
             idx = np.where(np.isfinite(logl) & (logl < loglstar))[0]
             log_ratio_1[idx] = -np.inf
-
             ratio = (log_ratio_1).exp().clamp(max=1)
             rnd_u = torch.rand(ratio.shape, device=self.device)
 
