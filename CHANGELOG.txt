@@ -1,0 +1,8 @@
+Changelog
+=========
+
+0.1.4 (xx.xx.xxxx) - IN DEVELOPMENT
+~~~~~~~~~~~~~~~~~~
+
+* Added patience parameter to stop training early when validation loss hasn't improved
+* Fixed dynamical stepsize

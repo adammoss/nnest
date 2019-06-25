@@ -9,6 +9,7 @@ sys.path.append(os.getcwd())
 
 
 def main(args):
+
     from nnest import NestedSampler
     from nnest.distributions import GeneralisedNormal
 
