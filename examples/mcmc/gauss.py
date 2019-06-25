@@ -10,7 +10,7 @@ sys.path.append(os.getcwd())
 
 def main(args):
 
-    from nnest.mcmc import MCMCSampler
+    from nnest import MCMCSampler
 
     def loglike(x):
         return multivariate_normal.logpdf(x, mean=np.zeros(args.x_dim), cov=np.eye(args.x_dim) + args.corr * (1 - np.eye(args.x_dim)))

@@ -63,7 +63,7 @@ class GaussianMix(object):
 
 def main(args):
 
-    from src.mcmc import MCMCSampler
+    from nnest import MCMCSampler
 
     g = GaussianMix()
 

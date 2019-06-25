@@ -7,7 +7,7 @@ sys.path.append(os.getcwd())
 
 def main(args):
 
-    from nnest.nested import NestedSampler
+    from nnest import NestedSampler
 
     def loglike(z):
         z1 = z[:, 0]

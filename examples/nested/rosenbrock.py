@@ -8,7 +8,7 @@ sys.path.append(os.getcwd())
 
 
 def main(args):
-    from nnest.nested import NestedSampler
+    from nnest import NestedSampler
 
     def loglike(z):
         return np.array([-sum(100.0 * (x[1:] - x[:-1] ** 2.0) ** 2.0 + (1 - x[:-1]) ** 2.0) for x in z])

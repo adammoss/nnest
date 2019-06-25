@@ -8,7 +8,7 @@ sys.path.append(os.getcwd())
 
 
 def main(args):
-    from nnest.mcmc import MCMCSampler
+    from nnest import MCMCSampler
 
     def loglike(z):
         return np.array([-sum(100.0 * (x[1:] - x[:-1] ** 2.0) ** 2.0 + (1 - x[:-1]) ** 2.0) for x in z])

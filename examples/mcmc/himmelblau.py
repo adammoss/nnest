@@ -7,7 +7,7 @@ sys.path.append(os.getcwd())
 
 def main(args):
 
-    from nnest.mcmc import MCMCSampler
+    from nnest import MCMCSampler
 
     def loglike(z):
         z1 = z[:, 0]
