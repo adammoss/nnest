@@ -11,7 +11,7 @@ sys.path.append(os.getcwd())
 
 def main(args):
 
-    from nnest.nested import NestedSampler
+    from nnest import NestedSampler
     from nnest.distributions import GeneralisedNormal
 
     def loglike(x):

@@ -64,7 +64,7 @@ class GaussianMix(object):
 
 def main(args):
 
-    from nnest.nested import NestedSampler
+    from nnest import NestedSampler
     from nnest.distributions import GeneralisedNormal
 
     g = GaussianMix()
