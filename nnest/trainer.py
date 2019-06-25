@@ -113,7 +113,8 @@ class Trainer(object):
             log_interval=50,
             save_interval=50,
             noise=0.0,
-            validation_fraction=0.1):
+            validation_fraction=0.1,
+            patience=50):
 
         start_time = time.time()
 
@@ -153,6 +154,8 @@ class Trainer(object):
         best_validation_epoch = 0
         best_model = copy.deepcopy(self.netG)
 
+        counter = 0
+
         for epoch in range(1, max_iters + 1):
 
             self.total_iters += 1
@@ -165,6 +168,7 @@ class Trainer(object):
                 best_validation_epoch = epoch
                 best_validation_loss = validation_loss
                 best_model = copy.deepcopy(self.netG)
+                counter = 0
 
             if epoch == 1 or epoch % log_interval == 0:
                 self.logger.info('Epoch [%i] train loss [%5.4f] validation loss [%5.4f]' % (
@@ -178,6 +182,12 @@ class Trainer(object):
                         os.path.join(self.path, 'models', 'netG.pt')
                     )
                     self._train_plot(self.netG, samples)
+
+            counter += 1
+
+            if counter > patience:
+                self.logger.info('Epoch [%i] ran out of patience' % (epoch))
+                break
 
         self.logger.info('Best epoch [%i] validation loss [%5.4f]' % (best_validation_epoch, best_validation_loss))
 
@@ -203,7 +213,6 @@ class Trainer(object):
         self.netG.eval()
 
         samples = []
-        latent = []
         likes = []
 
         if transform is None:
@@ -304,14 +313,16 @@ class Trainer(object):
                             else:
                                 mask[idx] = 0
 
-            accept += torch.sum(mask).cpu().numpy()
-            reject += batch_size - torch.sum(mask).cpu().numpy()
+            if 2 * torch.sum(mask).cpu().numpy() > batch_size:
+                accept += 1
+            else:
+                reject += 1
 
             if dynamic:
                 if accept > reject:
-                    scale *= np.exp(batch_size / accept)
+                    scale *= np.exp(1. / accept)
                 if accept < reject:
-                    scale /= np.exp(batch_size / reject)
+                    scale /= np.exp(1. / reject)
 
             m = mask[:, None].float()
             z = (z_prime * m + z * (1 - m)).detach()
@@ -323,7 +334,6 @@ class Trainer(object):
             x = x.detach().cpu().numpy()
             samples.append(x)
             likes.append(logl)
-            latent.append(z.cpu().numpy())
 
             if out_chain is not None:
                 v = transform(x)
@@ -337,7 +347,6 @@ class Trainer(object):
         # Transpose so shape is (chain_num, iteration, dim)
         samples = np.transpose(np.array(samples), axes=[1, 0, 2])
         likes = np.transpose(np.array(likes), axes=[1, 0])
-        latent = np.transpose(np.array(latent), axes=[1, 0, 2])
 
         if self.path and plot:
             cmap = plt.cm.jet
@@ -352,7 +361,7 @@ class Trainer(object):
             for ib in range(batch_size):
                 files[ib].close()
 
-        return samples, likes, latent, scale, ncall
+        return samples, likes, scale, ncall
 
     def _jacobian(self, z):
         """ Calculate det d f^{-1} (z)/dz

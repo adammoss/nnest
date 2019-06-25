@@ -202,7 +202,7 @@ class NestedSampler(Sampler):
                             [active_u[worst:worst + 1, :] for i in range(num_test_samples)])
                         logl = np.concatenate(
                             [active_logl[worst:worst + 1] for i in range(num_test_samples)])
-                        test_samples, _, _, scale, _ = self.trainer.sample(
+                        test_samples, _, scale, _ = self.trainer.sample(
                             loglike=self.loglike, init_x=init_x, logl=logl, loglstar=loglstar,
                             transform=self.transform, mcmc_steps=test_mcmc_steps + test_mcmc_burn_in,
                             max_prior=1, alpha=alpha)
@@ -219,7 +219,7 @@ class NestedSampler(Sampler):
                             low=0, high=self.num_live_points, size=mcmc_batch_size)
                         init_x = active_u[idx, :]
                         logl = active_logl[idx]
-                        samples, likes, latent, scale, nc = self.trainer.sample(
+                        samples, likes, scale, nc = self.trainer.sample(
                             loglike=self.loglike, init_x=init_x, logl=logl, loglstar=loglstar,
                             transform=self.transform, mcmc_steps=mcmc_steps + mcmc_burn_in,
                             max_prior=1, alpha=alpha)

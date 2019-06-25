@@ -128,7 +128,7 @@ class MCMCSampler(Sampler):
                     mc = self._init_samples(mcmc_steps=bootstrap_mcmc_steps, mcmc_batch_size=bootstrap_batch_size,
                                             ignore_rows=ignore_rows)
             else:
-                samples, likes, latent, scale, nc = self.trainer.sample(
+                samples, likes, scale, nc = self.trainer.sample(
                     loglike=self.loglike, transform=transform,
                     mcmc_steps=bootstrap_mcmc_steps, alpha=alpha, dynamic=False, show_progress=True)
                 samples = transform(samples)
@@ -148,7 +148,7 @@ class MCMCSampler(Sampler):
             def transform(x):
                 return x * std + mean
 
-        samples, likes, latent, scale, nc = self.trainer.sample(
+        samples, likes, scale, nc = self.trainer.sample(
             loglike=self.loglike, transform=transform,
             mcmc_steps=mcmc_steps, alpha=alpha, dynamic=False, show_progress=True,
             out_chain=os.path.join(self.logs['chains'], 'chain'))
