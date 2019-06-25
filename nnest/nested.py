@@ -225,7 +225,7 @@ class NestedSampler(Sampler):
                             low=0, high=self.num_live_points, size=mcmc_batch_size)
                         init_x = active_u[idx, :]
                         logl = active_logl[idx]
-                        samples, likes, scale, nc = self.trainer.sample(
+                        samples, likes, scale, nc = self.trainer.mcmc_sample(
                             loglike=self.loglike, init_x=init_x, logl=logl, loglstar=loglstar,
                             transform=self.transform, mcmc_steps=mcmc_steps + mcmc_burn_in,
                             max_prior=1, alpha=alpha)
