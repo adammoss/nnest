@@ -201,7 +201,7 @@ class Trainer(object):
             init_x=None,
             transform=None,
             max_prior=None,
-            efficency_factor=1.0):
+            efficiency_factor=0.5):
 
         self.netG.eval()
 
@@ -217,15 +217,16 @@ class Trainer(object):
         else:
             r = 1
 
-        enlargement = (1 / efficency_factor)**(1 / self.x_dim)
+        enlargement = (1 / efficiency_factor)**(1 / self.x_dim)
 
         nc = 0
         while True:
-            z = 2 * (np.random.uniform(size=(1, self.x_dim)) - 0.5)
-            z = z * enlargement
-            z = np.random.randn(self.x_dim)
-            z = enlargement * r * z * np.random.rand() ** (1. / self.x_dim) / np.sqrt(np.sum(z ** 2))
-            z = np.expand_dims(z, 0)
+            if hasattr(self.netG.base_dist, 'usample'):
+                z = self.netG.base_dist.usample(sample_shape=(1,)) * enlargement
+            else:
+                z = np.random.randn(self.x_dim)
+                z = enlargement * r * z * np.random.rand() ** (1. / self.x_dim) / np.sqrt(np.sum(z ** 2))
+                z = np.expand_dims(z, 0)
             x, log_det_J = self.netG(torch.from_numpy(z).float().to(self.device), mode='inverse')
             delta_log_det_J = (log_det_J - m).detach()
             log_ratio_1 = delta_log_det_J.squeeze(dim=1)

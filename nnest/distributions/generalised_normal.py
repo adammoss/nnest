@@ -6,6 +6,7 @@ from torch.distributions import constraints
 from torch.distributions.exp_family import ExponentialFamily
 from torch.distributions.utils import _standard_normal, broadcast_all
 from scipy.stats import gennorm
+import numpy as np
 
 
 class GeneralisedNormal(ExponentialFamily):
@@ -52,6 +53,10 @@ class GeneralisedNormal(ExponentialFamily):
 
     def rsample(self, sample_shape=torch.Size()):
         raise NotImplementedError
+
+    def usample(self, sample_shape=torch.Size()):
+        shape = self._extended_shape(sample_shape)
+        return 2 * (np.random.uniform(size=shape) - 0.5)
 
     def log_prob(self, value):
         if self._validate_args:
