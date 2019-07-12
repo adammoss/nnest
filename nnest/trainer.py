@@ -201,7 +201,8 @@ class Trainer(object):
             init_x=None,
             transform=None,
             max_prior=None,
-            efficiency_factor=0.5):
+            enlargement_factor=1.3,
+            constant_efficiency_factor=None):
 
         self.netG.eval()
 
@@ -217,15 +218,16 @@ class Trainer(object):
         else:
             r = 1
 
-        enlargement = (1 / efficiency_factor)**(1 / self.x_dim)
+        if constant_efficiency_factor is not None:
+            enlargement_factor = (1 / constant_efficiency_factor)**(1 / self.x_dim)
 
         nc = 0
         while True:
             if hasattr(self.netG.base_dist, 'usample'):
-                z = self.netG.base_dist.usample(sample_shape=(1,)) * enlargement
+                z = self.netG.base_dist.usample(sample_shape=(1,)) * enlargement_factor
             else:
                 z = np.random.randn(self.x_dim)
-                z = enlargement * r * z * np.random.rand() ** (1. / self.x_dim) / np.sqrt(np.sum(z ** 2))
+                z = enlargement_factor * r * z * np.random.rand() ** (1. / self.x_dim) / np.sqrt(np.sum(z ** 2))
                 z = np.expand_dims(z, 0)
             x, log_det_J = self.netG(torch.from_numpy(z).float().to(self.device), mode='inverse')
             delta_log_det_J = (log_det_J - m).detach()
@@ -236,11 +238,15 @@ class Trainer(object):
             if np.any(np.abs(x) > max_prior):
                 continue
 
+            rnd_u = torch.rand(ratio.shape, device=self.device)
+            ratio = (log_ratio_1).exp().clamp(max=1)
+            if rnd_u > ratio:
+                continue
+
             logl = loglike(transform(x))
             idx = np.where(np.isfinite(logl) & (logl < loglstar))[0]
             log_ratio_1[idx] = -np.inf
             ratio = (log_ratio_1).exp().clamp(max=1)
-            rnd_u = torch.rand(ratio.shape, device=self.device)
 
             nc += 1
             if rnd_u < ratio:

@@ -91,14 +91,11 @@ class NestedSampler(Sampler):
         if mcmc_steps <= 0:
             mcmc_steps = 5 * self.x_dim
 
-        if volume_switch <= 0:
-            volume_switch = 1 / mcmc_steps
-
         if alpha == 0.0:
             alpha = 2 / self.x_dim ** 0.5
 
         if self.log:
-            self.logger.info('MCMC steps [%d] alpha [%5.4f] volume switch [%5.4f]' % (mcmc_steps, alpha, volume_switch))
+            self.logger.info('MCMC steps [%d] alpha [%5.4f]' % (mcmc_steps, alpha))
 
         if self.use_mpi:
             self.logger.info('Using MPI with rank [%d]' % (self.mpi_rank))
@@ -136,7 +133,7 @@ class NestedSampler(Sampler):
         ncall = self.num_live_points  # number of calls we already made
         first_time = True
         nb = self.mpi_size * mcmc_batch_size
-        rejection_sample = True
+        rejection_sample = volume_switch < 1
         ncs = []
 
         for it in range(0, max_iters):
@@ -185,7 +182,7 @@ class NestedSampler(Sampler):
                                                             init_x=active_u, max_prior=1)
                 ncs.append(nc)
                 mean_calls = np.mean(ncs[-10:])
-                if mean_calls > mcmc_steps:
+                if expected_vol >= volume_switch >= 0 or (volume_switch < 0 and mean_calls > mcmc_steps):
                     rejection_sample = False
 
                 if self.use_mpi:
