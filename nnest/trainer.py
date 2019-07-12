@@ -201,7 +201,7 @@ class Trainer(object):
             init_x=None,
             transform=None,
             max_prior=None,
-            efficency_factor=1.0):
+            efficiency_factor=0.5):
 
         self.netG.eval()
 
@@ -217,15 +217,16 @@ class Trainer(object):
         else:
             r = 1
 
-        enlargement = (1 / efficency_factor)**(1 / self.x_dim)
+        enlargement = (1 / efficiency_factor)**(1 / self.x_dim)
 
         nc = 0
         while True:
-            z = 2 * (np.random.uniform(size=(1, self.x_dim)) - 0.5)
-            z = z * enlargement
-            z = np.random.randn(self.x_dim)
-            z = enlargement * r * z * np.random.rand() ** (1. / self.x_dim) / np.sqrt(np.sum(z ** 2))
-            z = np.expand_dims(z, 0)
+            if hasattr(self.netG.base_dist, 'usample'):
+                z = self.netG.base_dist.usample(sample_shape=(1,)) * enlargement
+            else:
+                z = np.random.randn(self.x_dim)
+                z = enlargement * r * z * np.random.rand() ** (1. / self.x_dim) / np.sqrt(np.sum(z ** 2))
+                z = np.expand_dims(z, 0)
             x, log_det_J = self.netG(torch.from_numpy(z).float().to(self.device), mode='inverse')
             delta_log_det_J = (log_det_J - m).detach()
             log_ratio_1 = delta_log_det_J.squeeze(dim=1)
@@ -267,7 +268,6 @@ class Trainer(object):
         self.netG.eval()
 
         samples = []
-        latent = []
         likes = []
 
         if transform is None:
@@ -368,14 +368,16 @@ class Trainer(object):
                             else:
                                 mask[idx] = 0
 
-            accept += torch.sum(mask).cpu().numpy()
-            reject += batch_size - torch.sum(mask).cpu().numpy()
+            if 2 * torch.sum(mask).cpu().numpy() > batch_size:
+                accept += 1
+            else:
+                reject += 1
 
             if dynamic:
                 if accept > reject:
-                    scale *= np.exp(batch_size / accept)
+                    scale *= np.exp(1. / accept)
                 if accept < reject:
-                    scale /= np.exp(batch_size / reject)
+                    scale /= np.exp(1. / reject)
 
             m = mask[:, None].float()
             z = (z_prime * m + z * (1 - m)).detach()
@@ -387,7 +389,6 @@ class Trainer(object):
             x = x.detach().cpu().numpy()
             samples.append(x)
             likes.append(logl)
-            latent.append(z.cpu().numpy())
 
             if out_chain is not None:
                 v = transform(x)
@@ -401,7 +402,6 @@ class Trainer(object):
         # Transpose so shape is (chain_num, iteration, dim)
         samples = np.transpose(np.array(samples), axes=[1, 0, 2])
         likes = np.transpose(np.array(likes), axes=[1, 0])
-        latent = np.transpose(np.array(latent), axes=[1, 0, 2])
 
         if self.path and plot:
             cmap = plt.cm.jet
@@ -416,7 +416,7 @@ class Trainer(object):
             for ib in range(batch_size):
                 files[ib].close()
 
-        return samples, likes, latent, scale, ncall
+        return samples, likes, scale, ncall
 
     def _jacobian(self, z):
         """ Calculate det d f^{-1} (z)/dz
