@@ -238,7 +238,8 @@ class Trainer(object):
             if np.any(np.abs(x) > max_prior):
                 continue
 
-            rnd_u = torch.rand(ratio.shape, device=self.device)
+            # Check volume constraint
+            rnd_u = torch.rand(log_ratio_1.shape, device=self.device)
             ratio = (log_ratio_1).exp().clamp(max=1)
             if rnd_u > ratio:
                 continue
