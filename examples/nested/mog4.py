@@ -92,7 +92,7 @@ if __name__ == '__main__':
 
     parser.add_argument('--x_dim', type=int, default=5,
                         help="Dimensionality")
-    parser.add_argument('--train_iters', type=int, default=50,
+    parser.add_argument('--train_iters', type=int, default=2000,
                         help="number of train iters")
     parser.add_argument("--mcmc_steps", type=int, default=0)
     parser.add_argument("--num_live_points", type=int, default=1000)
