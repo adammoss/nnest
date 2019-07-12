@@ -253,12 +253,6 @@ class NestedSampler(Sampler):
                 if it % log_interval == 0 and self.log:
                     acceptance, ess, jump_distance = self._chain_stats(samples, mean=np.mean(active_u, axis=0),
                                                                        std=np.std(active_u, axis=0))
-                    np.save(
-                        os.path.join(
-                            self.logs['extra'],
-                            'active_%s.npy' %
-                            it),
-                        active_v)
                     self.logger.info(
                         'Step [%d] loglstar [%5.4f] maxlogl [%5.4f] logz [%5.4f] vol [%6.5f] ncalls [%d] scale [%5.4f]' %
                         (it, loglstar, np.max(active_logl), logz, expected_vol, ncall, scale))
@@ -266,7 +260,10 @@ class NestedSampler(Sampler):
                         writer = csv.writer(f)
                         writer.writerow([it, acceptance, np.min(ess), np.max(
                             ess), jump_distance, scale, loglstar, logz, fraction_remain, ncall])
-                    self._save_samples(np.array(saved_v), np.exp(np.array(saved_logwt) - logz), np.array(saved_logl))
+
+            if it % log_interval == 0 and self.log:
+                np.save(os.path.join(self.logs['extra'], 'active_%s.npy' % it), active_v)
+                self._save_samples(np.array(saved_v), np.exp(np.array(saved_logwt) - logz), np.array(saved_logl))
 
             # Shrink interval
             logvol -= 1.0 / self.num_live_points
