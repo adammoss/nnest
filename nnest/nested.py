@@ -43,7 +43,7 @@ class NestedSampler(Sampler):
         self.sampler = 'nested'
 
         super(NestedSampler, self).__init__(x_dim, loglike, transform=transform, append_run_num=append_run_num,
-                                            run_num=run_num, hidden_dim=hidden_dim, num_slow=num_slow, 
+                                            run_num=run_num, hidden_dim=hidden_dim, num_slow=num_slow,
                                             num_derived=num_derived, batch_size=batch_size, flow=flow,
                                             num_blocks=num_blocks, num_layers=num_layers, log_dir=log_dir,
                                             use_gpu=use_gpu, base_dist=base_dist, scale=scale)
@@ -206,8 +206,8 @@ class NestedSampler(Sampler):
 
                 if it % log_interval == 0 and self.log:
                     self.logger.info(
-                        'Step [%d] loglstar [%5.4f] max logl [%5.4f] logz [%5.4f] vol [%6.5f] ncalls [%d] mean calls [%5.4f]' %
-                        (it, loglstar, np.max(active_logl), logz, expected_vol, ncall, mean_calls))
+                        'Step [%d] loglstar [%5.4f] max logl [%5.4f] logz [%5.4f] vol [%6.5f] ncalls [%d] mean '
+                        'calls [%5.4f]' % (it, loglstar, np.max(active_logl), logz, expected_vol, ncall, mean_calls))
 
             else:
 
@@ -251,8 +251,8 @@ class NestedSampler(Sampler):
                     acceptance, ess, jump_distance = self._chain_stats(samples, mean=np.mean(active_u, axis=0),
                                                                        std=np.std(active_u, axis=0))
                     self.logger.info(
-                        'Step [%d] loglstar [%5.4f] maxlogl [%5.4f] logz [%5.4f] vol [%6.5f] ncalls [%d] scale [%5.4f]' %
-                        (it, loglstar, np.max(active_logl), logz, expected_vol, ncall, scale))
+                        'Step [%d] loglstar [%5.4f] maxlogl [%5.4f] logz [%5.4f] vol [%6.5f] ncalls [%d] '
+                        'scale [%5.4f]' % (it, loglstar, np.max(active_logl), logz, expected_vol, ncall, scale))
                     with open(os.path.join(self.logs['results'], 'results.csv'), 'a') as f:
                         writer = csv.writer(f)
                         writer.writerow([it, acceptance, np.min(ess), np.max(

@@ -219,7 +219,7 @@ class Trainer(object):
             r = 1
 
         if constant_efficiency_factor is not None:
-            enlargement_factor = (1 / constant_efficiency_factor)**(1 / self.x_dim)
+            enlargement_factor = (1 / constant_efficiency_factor) ** (1 / self.x_dim)
 
         nc = 0
         while True:
@@ -304,7 +304,7 @@ class Trainer(object):
                 z = torch.randn(batch_size, self.z_dim, device=self.device)
                 x, _ = self.netG(z, mode='inverse')
                 x = x.detach().cpu().numpy()
-                logl = loglike(transform(x))                   
+                logl = loglike(transform(x))
 
         samples.append(x)
         likes.append(logl)
@@ -344,9 +344,7 @@ class Trainer(object):
 
             # Check not out of prior range
             if max_prior is not None:
-                prior = np.logical_or(
-                    np.abs(x) > max_prior,
-                    np.abs(x_prime) > max_prior)
+                prior = np.logical_or(np.abs(x) > max_prior, np.abs(x_prime) > max_prior)
                 idx = np.where([np.any(p) for p in prior])
                 log_ratio_1[idx] = -np.inf
 
@@ -414,8 +412,7 @@ class Trainer(object):
             cmap = plt.cm.jet
             cmap.set_under('w', 1)
             fig, ax = plt.subplots()
-            ax.hist2d(samples[:, -1, 0], samples[:, -1, 1],
-                      bins=200, cmap=cmap, vmin=1, alpha=0.2)
+            ax.hist2d(samples[:, -1, 0], samples[:, -1, 1], bins=200, cmap=cmap, vmin=1, alpha=0.2)
             if self.writer is not None:
                 self.writer.add_figure('chain', fig, self.total_iters)
 

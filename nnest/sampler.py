@@ -61,6 +61,7 @@ class Sampler(object):
                     assert x.shape[0] == self.x_dim
                     x = np.expand_dims(x, 0)
                 return transform(x)
+
             self.transform = safe_transform
 
         self.use_mpi = False
@@ -81,27 +82,27 @@ class Sampler(object):
         args.update(vars(self))
 
         if self.log:
-            self.logs = make_run_dir(log_dir, run_num, append_run_num= append_run_num)
+            self.logs = make_run_dir(log_dir, run_num, append_run_num=append_run_num)
             log_dir = self.logs['run_dir']
             self._save_params(args)
         else:
             log_dir = None
-                
+
         self.logger = create_logger(__name__)
 
         self.trainer = Trainer(
-                x_dim,
-                hidden_dim,
-                nslow=num_slow,
-                batch_size=batch_size,
-                flow=flow,
-                num_blocks=num_blocks,
-                num_layers=num_layers,
-                log_dir=log_dir,
-                log=self.log,
-                use_gpu=use_gpu,
-                base_dist=base_dist,
-                scale=scale)
+            x_dim,
+            hidden_dim,
+            nslow=num_slow,
+            batch_size=batch_size,
+            flow=flow,
+            num_blocks=num_blocks,
+            num_layers=num_layers,
+            log_dir=log_dir,
+            log=self.log,
+            use_gpu=use_gpu,
+            base_dist=base_dist,
+            scale=scale)
 
     def _save_params(self, my_dict):
         my_dict = {k: str(v) for k, v in my_dict.items()}
@@ -131,7 +132,7 @@ class Sampler(object):
                     f.write("\n")
         elif len(samples.shape) == 3:
             for ib in range(samples.shape[0]):
-                with open(os.path.join(self.logs['chains'], outfile + '_%s.txt' % (ib+1)), 'w') as f:
+                with open(os.path.join(self.logs['chains'], outfile + '_%s.txt' % (ib + 1)), 'w') as f:
                     for i in range(samples.shape[1]):
                         f.write("%.5E " % max(weights[ib, i], min_weight))
                         f.write("%.5E " % -logl[ib, i])
