@@ -41,7 +41,7 @@ class MCMCSampler(Sampler):
         self.sampler = 'mcmc'
 
         super(MCMCSampler, self).__init__(x_dim, loglike, transform=transform, append_run_num=append_run_num,
-                                          run_num=run_num, hidden_dim=hidden_dim, num_slow=num_slow, 
+                                          run_num=run_num, hidden_dim=hidden_dim, num_slow=num_slow,
                                           num_derived=num_derived, batch_size=batch_size, flow=flow,
                                           num_blocks=num_blocks, num_layers=num_layers, log_dir=log_dir,
                                           use_gpu=use_gpu, base_dist=base_dist, scale=scale)

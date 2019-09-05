@@ -35,7 +35,7 @@ class BatchNormFlow(nn.Module):
             if self.training:
                 self.batch_mean = inputs.mean(0)
                 self.batch_var = (
-                    inputs - self.batch_mean).pow(2).mean(0) + self.eps
+                                         inputs - self.batch_mean).pow(2).mean(0) + self.eps
 
                 self.running_mean.mul_(self.momentum)
                 self.running_var.mul_(self.momentum)
@@ -295,23 +295,21 @@ class FastSlow(SingleSpeed):
         assert mode in ['direct', 'inverse']
         if mode == 'direct':
             slow, logdets_slow = self.net_slow(inputs[:, 0:self.num_slow], mode=mode)
-            fast, logdets_fast = self.net_fast(inputs[:, self.num_slow:self.num_slow+self.num_fast], mode=mode)
+            fast, logdets_fast = self.net_fast(inputs[:, self.num_slow:self.num_slow + self.num_fast], mode=mode)
             inputs = torch.cat((slow, fast), dim=1)
             inputs, logdets = self.net(inputs, mode=mode)
         else:
             inputs, logdets = self.net(inputs, mode=mode)
             slow, logdets_slow = self.net_slow(inputs[:, 0:self.num_slow], mode=mode)
-            fast, logdets_fast = self.net_fast(inputs[:, self.num_slow:self.num_slow+self.num_fast], mode=mode)
+            fast, logdets_fast = self.net_fast(inputs[:, self.num_slow:self.num_slow + self.num_fast], mode=mode)
             inputs = torch.cat((slow, fast), dim=1)
         return inputs, logdets_slow + logdets_fast + logdets
 
     def log_probs(self, inputs, cond_inputs=None):
         slow, logdets_slow = self.net_slow(inputs[:, 0:self.num_slow])
-        fast, logdets_fast = self.net_fast(inputs[:, self.num_slow:self.num_slow+self.num_fast])
+        fast, logdets_fast = self.net_fast(inputs[:, self.num_slow:self.num_slow + self.num_fast])
         inputs = torch.cat((slow, fast), dim=1)
         u, log_jacob = self.net(inputs)
         log_probs = (-0.5 * u.pow(2) - 0.5 * math.log(2 * math.pi)).sum(
             -1, keepdim=True)
         return (log_probs + log_jacob + logdets_slow + logdets_fast).sum(-1, keepdim=True)
-
-
