@@ -59,6 +59,7 @@ class NestedSampler(Sampler):
 
     def run(
             self,
+            method=None,
             mcmc_steps=0,
             mcmc_burn_in=0,
             mcmc_batch_size=10,
@@ -73,6 +74,9 @@ class NestedSampler(Sampler):
             num_test_mcmc_samples=0,
             test_mcmc_steps=1000,
             test_mcmc_burn_in=0):
+
+        if method is None:
+            method = 'rejection_prior'
 
         if update_interval is None:
             update_interval = max(1, round(self.num_live_points))
@@ -174,16 +178,32 @@ class NestedSampler(Sampler):
                     self._chain_stats(test_samples, mean=np.mean(active_u, axis=0), std=np.std(active_u, axis=0))
                 first_time = False
 
-            if rejection_sample:
+            if method == 'rejection_prior' or method == 'rejection_flow':
 
                 # Rejection sampling
 
-                u, logl, nc = self.trainer.rejection_sample(self.loglike, loglstar, transform=self.transform,
-                                                            init_x=active_u, max_prior=1)
+                nc = 0
+
+                if method  == 'rejection_prior':
+
+                    # Simple rejection sampling over prior
+                    while True:
+                        u = 2 * (np.random.uniform(size=(1, self.x_dim)) - 0.5)
+                        v = self.transform(u)
+                        logl = self.loglike(v)
+                        nc += 1
+                        if logl > loglstar:
+                            break
+
+                else:
+
+                    # Rejection sampling using flow
+                    u, logl, nc = self.trainer.rejection_sample(self.loglike, loglstar, transform=self.transform,
+                                                                init_x=active_u, max_prior=1)
+
                 ncs.append(nc)
                 mean_calls = np.mean(ncs[-10:])
-                if expected_vol >= volume_switch >= 0 or (volume_switch < 0 and mean_calls > mcmc_steps):
-                    rejection_sample = False
+
 
                 if self.use_mpi:
                     recv_samples = self.comm.gather(u, root=0)
@@ -209,7 +229,15 @@ class NestedSampler(Sampler):
                         'Step [%d] loglstar [%5.4f] max logl [%5.4f] logz [%5.4f] vol [%6.5f] ncalls [%d] mean calls [%5.4f]' %
                         (it, loglstar, np.max(active_logl), logz, expected_vol, ncall, mean_calls))
 
-            else:
+                if expected_vol >= volume_switch >= 0:
+                    method = 'mcmc'
+                elif volume_switch < 0 and mean_calls > mcmc_steps:
+                    if method == 'rejection_prior':
+                        method = 'rejection_flow'
+                    else:
+                        method = 'mcmc'
+
+            elif method == 'mcmc':
 
                 # MCMC sampling
 
