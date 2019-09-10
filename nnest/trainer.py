@@ -263,7 +263,6 @@ class Trainer(object):
             dynamic=True,
             batch_size=1,
             init_x=None,
-            logl=None,
             loglstar=None,
             transform=None,
             show_progress=False,
@@ -275,6 +274,7 @@ class Trainer(object):
         self.netG.eval()
 
         samples = []
+        derived_samples = []
         likes = []
 
         if transform is None:
@@ -287,26 +287,20 @@ class Trainer(object):
             # Add the backward version of x rather than init_x due to numerical precision
             x, _ = self.netG(z, mode='inverse')
             x = x.detach().cpu().numpy()
-            if logl is None:
-                logl = loglike(transform(x))
+            logl, derived = loglike(transform(x))
         else:
-            if logl is None:
-                for i in range(max_start_tries):
-                    z = torch.randn(batch_size, self.z_dim, device=self.device)
-                    x, _ = self.netG(z, mode='inverse')
-                    x = x.detach().cpu().numpy()
-                    logl = loglike(transform(x))
-                    if np.all(logl > -1e30):
-                        break
-                    if i == max_start_tries - 1:
-                        raise Exception('Could not find starting value')
-            else:
+            for i in range(max_start_tries):
                 z = torch.randn(batch_size, self.z_dim, device=self.device)
                 x, _ = self.netG(z, mode='inverse')
                 x = x.detach().cpu().numpy()
-                logl = loglike(transform(x))
+                logl, derived = loglike(transform(x))
+                if np.all(logl > -1e30):
+                    break
+                if i == max_start_tries - 1:
+                    raise Exception('Could not find starting value')
 
         samples.append(x)
+        derived_samples.append(derived)
         likes.append(logl)
 
         iters = range(mcmc_steps)
@@ -352,6 +346,7 @@ class Trainer(object):
             ratio = log_ratio_1.exp().clamp(max=1)
             mask = (rnd_u < ratio).int()
             logl_prime = np.full(batch_size, logl)
+            derived_prime = np.copy(derived)
 
             # Only evaluate likelihood if prior and volume is accepted
             if loglike is not None and transform is not None:
@@ -359,10 +354,11 @@ class Trainer(object):
                     if im:
                         if not fast:
                             ncall += 1
-                        lp = loglike(transform(x_prime[idx]))
+                        lp, der = loglike(transform(x_prime[idx]))
                         if loglstar is not None:
                             if np.isfinite(lp) and lp >= loglstar:
                                 logl_prime[idx] = lp
+                                derived_prime[idx] = der
                             else:
                                 mask[idx] = 0
                         else:
@@ -370,6 +366,7 @@ class Trainer(object):
                                 logl_prime[idx] = lp
                             elif rnd_u[idx].cpu().numpy() < np.clip(np.exp(lp - logl[idx]), 0, 1):
                                 logl_prime[idx] = lp
+                                derived_prime[idx] = der
                             else:
                                 mask[idx] = 0
 
@@ -386,6 +383,7 @@ class Trainer(object):
 
             m = mask[:, None].float()
             z = (z_prime * m + z * (1 - m)).detach()
+            derived = derived_prime * m.cpu().numpy() + derived * (1 - m.cpu().numpy())
 
             m = mask
             logl = logl_prime * m.cpu().numpy() + logl * (1 - m.cpu().numpy())
@@ -393,6 +391,7 @@ class Trainer(object):
             x, _ = self.netG(z, mode='inverse')
             x = x.detach().cpu().numpy()
             samples.append(x)
+            derived_samples.append(derived)
             likes.append(logl)
 
             if out_chain is not None:
@@ -401,11 +400,13 @@ class Trainer(object):
                     files[ib].write("%.5E " % 1)
                     files[ib].write("%.5E " % -logl[ib])
                     files[ib].write(" ".join(["%.5E" % vi for vi in v[ib]]))
+                    files[ib].write(" ".join(["%.5E" % vi for vi in derived[ib]]))
                     files[ib].write("\n")
                     files[ib].flush()
 
-        # Transpose so shape is (chain_num, iteration, dim)
+        # Transpose samples so shape is (chain_num, iteration, dim)
         samples = np.transpose(np.array(samples), axes=[1, 0, 2])
+        derived_samples = np.transpose(np.array(derived_samples), axes=[1, 0, 2])
         likes = np.transpose(np.array(likes), axes=[1, 0])
 
         if self.path and plot:
@@ -420,7 +421,7 @@ class Trainer(object):
             for ib in range(batch_size):
                 files[ib].close()
 
-        return samples, likes, scale, ncall
+        return samples, derived_samples, likes, scale, ncall
 
     def _jacobian(self, z):
         """ Calculate det d f^{-1} (z)/dz

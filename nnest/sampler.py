@@ -39,17 +39,26 @@ class Sampler(object):
                  ):
 
         self.x_dim = x_dim
+        self.num_derived = num_derived
         self.num_params = x_dim + num_derived
 
         def safe_loglike(x):
             if len(x.shape) == 1:
                 assert x.shape[0] == self.x_dim
                 x = np.expand_dims(x, 0)
-            logl = loglike(x)
+            res = loglike(x)
+            if isinstance(res, tuple):
+                logl, derived = res
+            else:
+                logl = res
+                # Set derived shape to be (batch size, 0)
+                derived = np.array([[] for _ in x])
             if len(logl.shape) == 0:
                 logl = np.expand_dims(logl, 0)
             logl[np.logical_not(np.isfinite(logl))] = -1e100
-            return logl
+            if len(derived.shape) == 1 or derived.shape[1] != self.num_derived:
+                raise ValueError('Is the number of derived parameters correct and derived has the correct shape?')
+            return logl, derived
 
         self.loglike = safe_loglike
 
