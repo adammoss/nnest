@@ -218,6 +218,7 @@ class NestedSampler(Sampler):
                     ncall += sum(recv_nc)
                 else:
                     samples = np.array(u)
+                    derived_samples = np.array(der)
                     likes = np.array(logl)
                     ncall += nc
                 for ib in range(0, self.mpi_size):
@@ -225,7 +226,7 @@ class NestedSampler(Sampler):
                     active_v[worst] = self.transform(active_u[worst])
                     active_logl[worst] = likes[ib]
                     if self.num_derived > 0:
-                        active_derived[worst] = der[ib, :]
+                        active_derived[worst] = derived_samples[ib, :]
 
                 if it % log_interval == 0 and self.log:
                     self.logger.info(
@@ -248,7 +249,7 @@ class NestedSampler(Sampler):
                         idx = np.random.randint(
                             low=0, high=self.num_live_points, size=mcmc_batch_size)
                         init_x = active_u[idx, :]
-                        samples, der, likes, scale, nc = self.trainer.mcmc_sample(
+                        samples, derived_samples, likes, scale, nc = self.trainer.mcmc_sample(
                             loglike=self.loglike, init_x=init_x, loglstar=loglstar,
                             transform=self.transform, mcmc_steps=mcmc_steps + mcmc_burn_in,
                             max_prior=1, alpha=alpha)
@@ -271,7 +272,7 @@ class NestedSampler(Sampler):
                             active_v[worst] = self.transform(active_u[worst])
                             active_logl[worst] = likes[ib, -1]
                             if self.num_derived > 0:
-                                active_derived[worst] = der[ib, -1, :]
+                                active_derived[worst] = derived_samples[ib, -1, :]
                             accept = True
                             break
 
