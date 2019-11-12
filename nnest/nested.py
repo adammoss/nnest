@@ -156,7 +156,7 @@ class NestedSampler(Sampler):
             if self.num_derived > 0:
                 saved_v.append(np.concatenate((active_v[worst], active_derived[worst])))
             else:
-                saved_v.append(active_v[worst])
+                saved_v.append(np.array(active_v[worst], copy=True))
             saved_logwt.append(logwt)
             saved_logl.append(active_logl[worst])
 
@@ -186,7 +186,7 @@ class NestedSampler(Sampler):
 
                 nc = 0
 
-                if method  == 'rejection_prior':
+                if method == 'rejection_prior':
 
                     # Simple rejection sampling over prior
                     while True:

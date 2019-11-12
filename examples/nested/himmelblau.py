@@ -31,6 +31,7 @@ def main(args):
     sampler.run(train_iters=args.train_iters, mcmc_steps=args.mcmc_steps, volume_switch=args.switch, noise=args.noise,
                 num_test_mcmc_samples=args.test_samples, test_mcmc_steps=args.test_mcmc_steps)
 
+
 if __name__ == '__main__':
 
     parser = argparse.ArgumentParser()
