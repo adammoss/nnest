@@ -35,12 +35,9 @@ class Gaussian(object):
 
 class GaussianMix(object):
 
-    def __init__(self, sep=4, weights=(0.4, 0.3, 0.2, 0.1), sigma=1,
-                 nderived=0):
-        assert len(weights) in [2, 3, 4], (
-            'Weights must have 2, 3 or 4 components. Weights=' + str(weights))
-        assert np.isclose(sum(weights), 1), (
-            'Weights must sum to 1! Weights=' + str(weights))
+    def __init__(self, sep=4, weights=(0.4, 0.3, 0.2, 0.1), sigma=1, nderived=0):
+        assert len(weights) in [2, 3, 4], ('Weights must have 2, 3 or 4 components. Weights=' + str(weights))
+        assert np.isclose(sum(weights), 1), ('Weights must sum to 1! Weights=' + str(weights))
         self.nderived = nderived
         self.weights = weights
         self.sigmas = [sigma] * len(weights)

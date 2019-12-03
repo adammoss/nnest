@@ -113,6 +113,10 @@ class Sampler(object):
             base_dist=base_dist,
             scale=scale)
 
+        if self.log:
+            self.logger.info('Num params [%d]' % (self.num_params))
+            self.logger.info('Num derived params [%d]' % (self.num_derived))
+
     def _save_params(self, my_dict):
         my_dict = {k: str(v) for k, v in my_dict.items()}
         with open(os.path.join(self.logs['info'], 'params.txt'), 'w') as f:
