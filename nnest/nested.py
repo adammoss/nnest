@@ -229,8 +229,6 @@ class NestedSampler(Sampler):
                     if self.num_derived > 0:
                         active_derived[worst] = derived_samples[ib, :]
 
-                print(mean_calls, expected_vol, volume_switch)
-
                 if it % log_interval == 0 and self.log:
                     self.logger.info(
                         'Step [%d] loglstar [%5.4f] max logl [%5.4f] logz [%5.4f] vol [%6.5f] ncalls [%d] mean '
