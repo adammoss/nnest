@@ -99,7 +99,8 @@ class NestedSampler(Sampler):
             alpha = 2 / self.x_dim ** 0.5
 
         if self.log:
-            self.logger.info('MCMC steps [%d] alpha [%5.4f]' % (mcmc_steps, alpha))
+            self.logger.info('MCMC steps [%d]' % mcmc_steps)
+            self.logger.info('Initial scale [%5.4f]' % alpha)
 
         if self.use_mpi:
             self.logger.info('Using MPI with rank [%d]' % (self.mpi_rank))

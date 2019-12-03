@@ -136,7 +136,7 @@ class Sampler(object):
         ess = effective_sample_size(samples, mean, std)
         jump_distance = mean_jump_distance(samples)
         self.logger.info(
-            'Acceptance [%5.4f] min ESS [%5.4f] max ESS [%5.4f] jump distance [%5.4f]' %
+            'Acceptance [%5.4f] min ESS [%5.4f] max ESS [%5.4f] average jump distance [%5.4f]' %
             (acceptance, np.min(ess), np.max(ess), jump_distance))
         return acceptance, ess, jump_distance
 
