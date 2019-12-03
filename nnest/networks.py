@@ -244,7 +244,7 @@ class FastSlow(SingleSpeed):
 
     def __init__(self, num_fast, num_slow, num_hidden, num_blocks, num_layers, scale='',
                  base_dist=None, device=None):
-        super(FastSlow, self).__init__()
+        super(FastSlow, self).__init__(num_fast + num_slow, num_slow, num_hidden, num_blocks, num_layers)
 
         self.num_fast = num_fast
         self.num_slow = num_slow
@@ -260,7 +260,7 @@ class FastSlow(SingleSpeed):
             modules_fast += [
                 CouplingLayer(
                     num_fast, num_hidden, mask_fast, None,
-                    s_act='tanh', t_act='relu', num_layers=num_layers, scale=scale)
+                    s_act='tanh', t_act='relu', num_layers=num_layers)
             ]
             mask_fast = 1 - mask_fast
         self.net_fast = FlowSequential(*modules_fast)
@@ -275,7 +275,7 @@ class FastSlow(SingleSpeed):
             modules_slow += [
                 CouplingLayer(
                     num_slow, num_hidden, mask_slow, None,
-                    s_act='tanh', t_act='relu', num_layers=num_layers, scale=scale)
+                    s_act='tanh', t_act='relu', num_layers=num_layers)
             ]
             mask_slow = 1 - mask_slow
         self.net_slow = FlowSequential(*modules_slow)
@@ -287,7 +287,7 @@ class FastSlow(SingleSpeed):
         modules = [
             CouplingLayer(
                 num_slow + num_fast, num_hidden, mask, None,
-                s_act='tanh', t_act='relu', num_layers=num_layers, scale=scale)
+                s_act='tanh', t_act='relu', num_layers=num_layers)
         ]
         self.net = FlowSequential(*modules)
 

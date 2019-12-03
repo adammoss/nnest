@@ -43,6 +43,8 @@ class Sampler(object):
         self.num_params = x_dim + num_derived
 
         def safe_loglike(x):
+            if isinstance(x, list):
+                x = np.array(x)
             if len(x.shape) == 1:
                 assert x.shape[0] == self.x_dim
                 x = np.expand_dims(x, 0)
@@ -66,6 +68,8 @@ class Sampler(object):
             self.transform = lambda x: x
         else:
             def safe_transform(x):
+                if isinstance(x, list):
+                    x = np.array(x)
                 if len(x.shape) == 1:
                     assert x.shape[0] == self.x_dim
                     x = np.expand_dims(x, 0)
@@ -114,8 +118,9 @@ class Sampler(object):
             scale=scale)
 
         if self.log:
-            self.logger.info('Num params [%d]' % (self.num_params))
+            self.logger.info('Num base params [%d]' % (self.x_dim))
             self.logger.info('Num derived params [%d]' % (self.num_derived))
+            self.logger.info('Total params [%d]' % (self.num_params))
 
     def _save_params(self, my_dict):
         my_dict = {k: str(v) for k, v in my_dict.items()}
