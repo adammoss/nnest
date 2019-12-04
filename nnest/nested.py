@@ -235,8 +235,9 @@ class NestedSampler(Sampler):
                         'Step [%d] loglstar [%5.4f] max logl [%5.4f] logz [%5.4f] vol [%6.5f] ncalls [%d] mean '
                         'calls [%5.4f]' % (it, loglstar, np.max(active_logl), logz, expected_vol, ncall, mean_calls))
 
-                if expected_vol >= volume_switch >= 0 or (volume_switch < 0 and mean_calls > mcmc_steps):
+                if expected_vol < volume_switch >= 0 or (volume_switch < 0 and mean_calls > mcmc_steps):
                     # Switch to MCMC if rejection sampling becomes inefficient
+                    self.logger.info('Switching to MCMC sampling')
                     method = 'mcmc'
 
             elif method == 'mcmc':
