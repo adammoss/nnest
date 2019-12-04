@@ -278,7 +278,7 @@ class NestedSampler(Sampler):
                             accept = True
                             break
 
-                if it % log_interval == 0 and self.log:
+                if True: #it % log_interval == 0 and self.log:
                     acceptance, ess, jump_distance = self._chain_stats(samples, mean=np.mean(active_u, axis=0),
                                                                        std=np.std(active_u, axis=0))
                     self.logger.info(

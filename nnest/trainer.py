@@ -28,6 +28,9 @@ from nnest.networks import SingleSpeed, FastSlow, BatchNormFlow
 from nnest.utils.logger import create_logger
 
 
+torch.set_printoptions(precision=8)
+
+
 class Trainer(object):
 
     def __init__(self,
@@ -328,13 +331,32 @@ class Trainer(object):
                 fast = False
             z_prime = z + dz
 
+            print('11111111111111111')
+            print(z)
             # Jacobian is det d f^{-1} (z)/dz
             x, log_det_J = self.netG(z, mode='inverse')
             x_prime, log_det_J_prime = self.netG(z_prime, mode='inverse')
+            x = x.float()
+            print(x)
+            print(type(x))
             x = x.detach().cpu().numpy()
             x_prime = x_prime.detach().cpu().numpy()
             delta_log_det_J = (log_det_J_prime - log_det_J).detach()
             log_ratio_1 = delta_log_det_J.squeeze(dim=1)
+
+            print(x)
+            print(z)
+            x3, _ = self.netG(z, mode='inverse')
+            x3 = x3.float()
+            print(x3)
+
+            x3 = x3.detach().cpu().numpy()
+            print(x3)
+            print(x3 == x)
+
+
+            #print(x_prime)
+            print('222222222222222222')
 
             # Check not out of prior range
             if max_prior is not None:
@@ -382,7 +404,10 @@ class Trainer(object):
                     scale /= np.exp(1. / reject)
 
             m = mask[:, None].float()
+            #print(m)
+            #print(z)
             z = (z_prime * m + z * (1 - m)).detach()
+            #print(z)
             derived = derived_prime * m.cpu().numpy() + derived * (1 - m.cpu().numpy())
 
             m = mask
@@ -393,6 +418,10 @@ class Trainer(object):
             samples.append(x)
             derived_samples.append(derived)
             likes.append(logl)
+
+            #print(x, logl)
+
+            #print('33333333333333333')
 
             if out_chain is not None:
                 v = transform(x)
