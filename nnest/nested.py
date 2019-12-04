@@ -101,6 +101,7 @@ class NestedSampler(Sampler):
         if self.log:
             self.logger.info('MCMC steps [%d]' % mcmc_steps)
             self.logger.info('Initial scale [%5.4f]' % alpha)
+            self.logger.info('Volume switch [%5.4f]' % volume_switch)
 
         if self.use_mpi:
             self.logger.info('Using MPI with rank [%d]' % (self.mpi_rank))
