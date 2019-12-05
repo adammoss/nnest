@@ -3,7 +3,6 @@ import sys
 import argparse
 
 import numpy as np
-from scipy.stats import multivariate_normal
 import torch
 
 sys.path.append(os.getcwd())

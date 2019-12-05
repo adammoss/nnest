@@ -3,6 +3,7 @@ import sys
 import argparse
 
 import numpy as np
+from scipy.stats import multivariate_normal
 import torch
 import scipy.special
 
