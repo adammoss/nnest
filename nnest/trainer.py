@@ -13,8 +13,8 @@ import copy
 
 import torch
 from torch.utils.data import DataLoader
+from torch.utils.tensorboard import SummaryWriter
 import numpy as np
-from tensorboardX import SummaryWriter
 from sklearn.model_selection import train_test_split
 import scipy.spatial
 from tqdm import tqdm
