@@ -15,7 +15,7 @@ setup(
     license="MIT",
     packages=find_packages(),
     provides=["nnest"],
-    requires=["torch>=1.3.1",
+    install_requires=["torch>=1.3.1",
               "tensorboard>=1.14",
               "numpy",
               "scipy",
