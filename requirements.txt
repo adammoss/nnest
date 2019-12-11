@@ -1,11 +1,10 @@
-tensorflow
-tensorboardX
 getdist
 numpy
 scipy
 matplotlib
 pandas
-torch
+torch >= 1.3.1
 tqdm
 scikit-learn
 pillow
+tensorboard >= 1.14

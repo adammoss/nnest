@@ -34,20 +34,33 @@ class Sampler(object):
                  num_layers=2,
                  log_dir='logs/test',
                  use_gpu=False,
+                 base_dist=None,
+                 scale=''
                  ):
 
         self.x_dim = x_dim
+        self.num_derived = num_derived
         self.num_params = x_dim + num_derived
 
         def safe_loglike(x):
+            if isinstance(x, list):
+                x = np.array(x)
             if len(x.shape) == 1:
                 assert x.shape[0] == self.x_dim
                 x = np.expand_dims(x, 0)
-            logl = loglike(x)
+            res = loglike(x)
+            if isinstance(res, tuple):
+                logl, derived = res
+            else:
+                logl = res
+                # Set derived shape to be (batch size, 0)
+                derived = np.array([[] for _ in x])
             if len(logl.shape) == 0:
                 logl = np.expand_dims(logl, 0)
             logl[np.logical_not(np.isfinite(logl))] = -1e100
-            return logl
+            if len(derived.shape) == 1 or derived.shape[1] != self.num_derived:
+                raise ValueError('Is the number of derived parameters correct and derived has the correct shape?')
+            return logl, derived
 
         self.loglike = safe_loglike
 
@@ -55,10 +68,13 @@ class Sampler(object):
             self.transform = lambda x: x
         else:
             def safe_transform(x):
+                if isinstance(x, list):
+                    x = np.array(x)
                 if len(x.shape) == 1:
                     assert x.shape[0] == self.x_dim
                     x = np.expand_dims(x, 0)
                 return transform(x)
+
             self.transform = safe_transform
 
         self.use_mpi = False
@@ -79,25 +95,32 @@ class Sampler(object):
         args.update(vars(self))
 
         if self.log:
-            self.logs = make_run_dir(log_dir, run_num, append_run_num= append_run_num)
+            self.logs = make_run_dir(log_dir, run_num, append_run_num=append_run_num)
             log_dir = self.logs['run_dir']
             self._save_params(args)
         else:
             log_dir = None
-                
+
         self.logger = create_logger(__name__)
 
         self.trainer = Trainer(
-                x_dim,
-                hidden_dim,
-                nslow=num_slow,
-                batch_size=batch_size,
-                flow=flow,
-                num_blocks=num_blocks,
-                num_layers=num_layers,
-                log_dir=log_dir,
-                log=self.log,
-                use_gpu=use_gpu)
+            x_dim,
+            hidden_dim,
+            nslow=num_slow,
+            batch_size=batch_size,
+            flow=flow,
+            num_blocks=num_blocks,
+            num_layers=num_layers,
+            log_dir=log_dir,
+            log=self.log,
+            use_gpu=use_gpu,
+            base_dist=base_dist,
+            scale=scale)
+
+        if self.log:
+            self.logger.info('Num base params [%d]' % (self.x_dim))
+            self.logger.info('Num derived params [%d]' % (self.num_derived))
+            self.logger.info('Total params [%d]' % (self.num_params))
 
     def _save_params(self, my_dict):
         my_dict = {k: str(v) for k, v in my_dict.items()}
@@ -113,7 +136,7 @@ class Sampler(object):
         ess = effective_sample_size(samples, mean, std)
         jump_distance = mean_jump_distance(samples)
         self.logger.info(
-            'Acceptance [%5.4f] min ESS [%5.4f] max ESS [%5.4f] jump distance [%5.4f]' %
+            'Acceptance [%5.4f] min ESS [%5.4f] max ESS [%5.4f] average jump distance [%5.4f]' %
             (acceptance, np.min(ess), np.max(ess), jump_distance))
         return acceptance, ess, jump_distance
 
@@ -127,7 +150,7 @@ class Sampler(object):
                     f.write("\n")
         elif len(samples.shape) == 3:
             for ib in range(samples.shape[0]):
-                with open(os.path.join(self.logs['chains'], outfile + '_%s.txt' % (ib+1)), 'w') as f:
+                with open(os.path.join(self.logs['chains'], outfile + '_%s.txt' % (ib + 1)), 'w') as f:
                     for i in range(samples.shape[1]):
                         f.write("%.5E " % max(weights[ib, i], min_weight))
                         f.write("%.5E " % -logl[ib, i])

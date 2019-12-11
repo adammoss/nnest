@@ -34,6 +34,8 @@ class NestedSampler(Sampler):
                  num_layers=2,
                  log_dir='logs/test',
                  use_gpu=False,
+                 base_dist=None,
+                 scale='',
                  num_live_points=1000
                  ):
 
@@ -41,10 +43,10 @@ class NestedSampler(Sampler):
         self.sampler = 'nested'
 
         super(NestedSampler, self).__init__(x_dim, loglike, transform=transform, append_run_num=append_run_num,
-                                            run_num=run_num, hidden_dim=hidden_dim, num_slow=num_slow, 
+                                            run_num=run_num, hidden_dim=hidden_dim, num_slow=num_slow,
                                             num_derived=num_derived, batch_size=batch_size, flow=flow,
                                             num_blocks=num_blocks, num_layers=num_layers, log_dir=log_dir,
-                                            use_gpu=use_gpu)
+                                            use_gpu=use_gpu, base_dist=base_dist, scale=scale)
 
         if self.log:
             self.logger.info('Num live points [%d]' % (self.num_live_points))
@@ -57,6 +59,7 @@ class NestedSampler(Sampler):
 
     def run(
             self,
+            method=None,
             mcmc_steps=0,
             mcmc_burn_in=0,
             mcmc_batch_size=10,
@@ -64,13 +67,16 @@ class NestedSampler(Sampler):
             update_interval=None,
             log_interval=None,
             dlogz=0.5,
-            train_iters=50,
-            volume_switch=0,
+            train_iters=500,
+            volume_switch=-1.0,
             alpha=0.0,
             noise=-1.0,
-            num_test_samples=0,
+            num_test_mcmc_samples=0,
             test_mcmc_steps=1000,
             test_mcmc_burn_in=0):
+
+        if method is None:
+            method = 'rejection_prior'
 
         if update_interval is None:
             update_interval = max(1, round(self.num_live_points))
@@ -89,14 +95,13 @@ class NestedSampler(Sampler):
         if mcmc_steps <= 0:
             mcmc_steps = 5 * self.x_dim
 
-        if volume_switch <= 0:
-            volume_switch = 1 / mcmc_steps
-
         if alpha == 0.0:
             alpha = 2 / self.x_dim ** 0.5
 
         if self.log:
-            self.logger.info('MCMC steps [%d] alpha [%5.4f] volume switch [%5.4f]' % (mcmc_steps, alpha, volume_switch))
+            self.logger.info('MCMC steps [%d]' % mcmc_steps)
+            self.logger.info('Initial scale [%5.4f]' % alpha)
+            self.logger.info('Volume switch [%5.4f]' % volume_switch)
 
         if self.use_mpi:
             self.logger.info('Using MPI with rank [%d]' % (self.mpi_rank))
@@ -122,7 +127,7 @@ class NestedSampler(Sampler):
             recv_active_logl = self.comm.bcast(recv_active_logl, root=0)
             active_logl = np.concatenate(recv_active_logl, axis=0)
         else:
-            active_logl = self.loglike(active_v)
+            active_logl, active_derived = self.loglike(active_v)
 
         saved_v = []  # Stored points for posterior results
         saved_logl = []
@@ -134,6 +139,8 @@ class NestedSampler(Sampler):
         ncall = self.num_live_points  # number of calls we already made
         first_time = True
         nb = self.mpi_size * mcmc_batch_size
+        rejection_sample = volume_switch < 1
+        ncs = []
 
         for it in range(0, max_iters):
 
@@ -147,7 +154,11 @@ class NestedSampler(Sampler):
             logz = logz_new
 
             # Add worst object to samples.
-            saved_v.append(np.array(active_v[worst]))
+
+            if self.num_derived > 0:
+                saved_v.append(np.concatenate((active_v[worst], active_derived[worst])))
+            else:
+                saved_v.append(np.array(active_v[worst], copy=True))
             saved_logwt.append(logwt)
             saved_logl.append(active_logl[worst])
 
@@ -156,17 +167,47 @@ class NestedSampler(Sampler):
             # The new likelihood constraint is that of the worst object.
             loglstar = active_logl[worst]
 
-            if expected_vol > volume_switch:
+            # Train flow
+            if first_time or it % update_interval == 0:
+                self.trainer.train(active_u, max_iters=train_iters, noise=noise)
+                if num_test_mcmc_samples > 0:
+                    # Test multiple chains from worst point to check mixing
+                    init_x = np.concatenate(
+                        [active_u[worst:worst + 1, :] for i in range(num_test_mcmc_samples)])
+                    test_samples, _, _, _, scale, _ = self.trainer.mcmc_sample(
+                        self.loglike, init_x=init_x, loglstar=loglstar,
+                        transform=self.transform, mcmc_steps=test_mcmc_steps + test_mcmc_burn_in,
+                        max_prior=1, alpha=alpha)
+                    np.save(os.path.join(self.logs['chains'], 'test_samples.npy'), test_samples)
+                    self._chain_stats(test_samples, mean=np.mean(active_u, axis=0), std=np.std(active_u, axis=0))
+                first_time = False
+
+            if method == 'rejection_prior' or method == 'rejection_flow':
+
+                # Rejection sampling
 
                 nc = 0
-                # Simple rejection sampling over prior
-                while True:
-                    u = 2 * (np.random.uniform(size=(1, self.x_dim)) - 0.5)
-                    v = self.transform(u)
-                    logl = self.loglike(v)
-                    nc += 1
-                    if logl > loglstar:
-                        break
+
+                if method == 'rejection_prior':
+
+                    # Simple rejection sampling over prior
+                    while True:
+                        u = 2 * (np.random.uniform(size=(1, self.x_dim)) - 0.5)
+                        v = self.transform(u)
+                        logl, der = self.loglike(v)
+                        nc += 1
+                        if logl > loglstar:
+                            break
+
+                else:
+
+                    # Rejection sampling using flow
+                    u, logl, nc = self.trainer.rejection_sample(self.loglike, loglstar, transform=self.transform,
+                                                                init_x=active_u, max_prior=1)
+
+                ncs.append(nc)
+                mean_calls = np.mean(ncs[-10:])
+
                 if self.use_mpi:
                     recv_samples = self.comm.gather(u, root=0)
                     recv_likes = self.comm.gather(logl, root=0)
@@ -179,36 +220,29 @@ class NestedSampler(Sampler):
                     ncall += sum(recv_nc)
                 else:
                     samples = np.array(u)
+                    derived_samples = np.array(der)
                     likes = np.array(logl)
                     ncall += nc
                 for ib in range(0, self.mpi_size):
                     active_u[worst] = samples[ib, :]
                     active_v[worst] = self.transform(active_u[worst])
                     active_logl[worst] = likes[ib]
+                    if self.num_derived > 0:
+                        active_derived[worst] = derived_samples[ib, :]
 
                 if it % log_interval == 0 and self.log:
                     self.logger.info(
-                        'Step [%d] loglstar [%5.4f] max logl [%5.4f] logz [%5.4f] vol [%6.5f] ncalls [%d]]' %
-                        (it, loglstar, np.max(active_logl), logz, expected_vol, ncall))
+                        'Step [%d] loglstar [%5.4e] max logl [%5.4e] logz [%5.4e] vol [%6.5e] ncalls [%d] mean '
+                        'calls [%5.4f]' % (it, loglstar, np.max(active_logl), logz, expected_vol, ncall, mean_calls))
 
-            else:
+                if expected_vol < volume_switch >= 0 or (volume_switch < 0 and mean_calls > mcmc_steps):
+                    # Switch to MCMC if rejection sampling becomes inefficient
+                    self.logger.info('Switching to MCMC sampling')
+                    method = 'mcmc'
 
-                # MCMC
-                if first_time or it % update_interval == 0:
-                    self.trainer.train(active_u, max_iters=train_iters, noise=noise)
-                    if num_test_samples > 0:
-                        # Test multiple chains from worst point to check mixing
-                        init_x = np.concatenate(
-                            [active_u[worst:worst + 1, :] for i in range(num_test_samples)])
-                        logl = np.concatenate(
-                            [active_logl[worst:worst + 1] for i in range(num_test_samples)])
-                        test_samples, _, scale, _ = self.trainer.sample(
-                            loglike=self.loglike, init_x=init_x, logl=logl, loglstar=loglstar,
-                            transform=self.transform, mcmc_steps=test_mcmc_steps + test_mcmc_burn_in,
-                            max_prior=1, alpha=alpha)
-                        np.save(os.path.join(self.logs['chains'], 'test_samples.npy'), test_samples)
-                        self._chain_stats(test_samples, mean=np.mean(active_u, axis=0), std=np.std(active_u, axis=0))
-                    first_time = False
+            elif method == 'mcmc':
+
+                # MCMC sampling
 
                 accept = False
                 while not accept:
@@ -218,9 +252,8 @@ class NestedSampler(Sampler):
                         idx = np.random.randint(
                             low=0, high=self.num_live_points, size=mcmc_batch_size)
                         init_x = active_u[idx, :]
-                        logl = active_logl[idx]
-                        samples, likes, scale, nc = self.trainer.sample(
-                            loglike=self.loglike, init_x=init_x, logl=logl, loglstar=loglstar,
+                        samples, derived_samples, likes, scale, nc = self.trainer.mcmc_sample(
+                            loglike=self.loglike, init_x=init_x, loglstar=loglstar,
                             transform=self.transform, mcmc_steps=mcmc_steps + mcmc_burn_in,
                             max_prior=1, alpha=alpha)
                         if self.use_mpi:
@@ -241,26 +274,25 @@ class NestedSampler(Sampler):
                             active_u[worst] = samples[ib, -1, :]
                             active_v[worst] = self.transform(active_u[worst])
                             active_logl[worst] = likes[ib, -1]
+                            if self.num_derived > 0:
+                                active_derived[worst] = derived_samples[ib, -1, :]
                             accept = True
                             break
 
                 if it % log_interval == 0 and self.log:
                     acceptance, ess, jump_distance = self._chain_stats(samples, mean=np.mean(active_u, axis=0),
                                                                        std=np.std(active_u, axis=0))
-                    np.save(
-                        os.path.join(
-                            self.logs['extra'],
-                            'active_%s.npy' %
-                            it),
-                        active_v)
                     self.logger.info(
-                        'Step [%d] loglstar [%5.4f] maxlogl [%5.4f] logz [%5.4f] vol [%6.5f] ncalls [%d] scale [%5.4f]' %
-                        (it, loglstar, np.max(active_logl), logz, expected_vol, ncall, scale))
+                        'Step [%d] loglstar [%5.4e] maxlogl [%5.4e] logz [%5.4e] vol [%6.5e] ncalls [%d] '
+                        'scale [%5.4f]' % (it, loglstar, np.max(active_logl), logz, expected_vol, ncall, scale))
                     with open(os.path.join(self.logs['results'], 'results.csv'), 'a') as f:
                         writer = csv.writer(f)
                         writer.writerow([it, acceptance, np.min(ess), np.max(
                             ess), jump_distance, scale, loglstar, logz, fraction_remain, ncall])
-                    self._save_samples(np.array(saved_v), np.exp(np.array(saved_logwt) - logz), np.array(saved_logl))
+
+            if it % log_interval == 0 and self.log:
+                np.save(os.path.join(self.logs['extra'], 'active_%s.npy' % it), active_v)
+                self._save_samples(np.array(saved_v), np.exp(np.array(saved_logwt) - logz), np.array(saved_logl))
 
             # Shrink interval
             logvol -= 1.0 / self.num_live_points
