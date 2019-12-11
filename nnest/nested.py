@@ -232,7 +232,7 @@ class NestedSampler(Sampler):
 
                 if it % log_interval == 0 and self.log:
                     self.logger.info(
-                        'Step [%d] loglstar [%5.4f] max logl [%5.4f] logz [%5.4f] vol [%6.5f] ncalls [%d] mean '
+                        'Step [%d] loglstar [%5.4e] max logl [%5.4e] logz [%5.4e] vol [%6.5e] ncalls [%d] mean '
                         'calls [%5.4f]' % (it, loglstar, np.max(active_logl), logz, expected_vol, ncall, mean_calls))
 
                 if expected_vol < volume_switch >= 0 or (volume_switch < 0 and mean_calls > mcmc_steps):
@@ -283,7 +283,7 @@ class NestedSampler(Sampler):
                     acceptance, ess, jump_distance = self._chain_stats(samples, mean=np.mean(active_u, axis=0),
                                                                        std=np.std(active_u, axis=0))
                     self.logger.info(
-                        'Step [%d] loglstar [%5.4f] maxlogl [%5.4f] logz [%5.4f] vol [%6.5f] ncalls [%d] '
+                        'Step [%d] loglstar [%5.4e] maxlogl [%5.4e] logz [%5.4e] vol [%6.5e] ncalls [%d] '
                         'scale [%5.4f]' % (it, loglstar, np.max(active_logl), logz, expected_vol, ncall, scale))
                     with open(os.path.join(self.logs['results'], 'results.csv'), 'a') as f:
                         writer = csv.writer(f)
