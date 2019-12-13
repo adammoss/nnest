@@ -11,6 +11,8 @@ from __future__ import division
 
 import os
 import csv
+import json
+import glob
 
 import numpy as np
 
@@ -103,46 +105,75 @@ class NestedSampler(Sampler):
             self.logger.info('Initial scale [%5.4f]' % alpha)
             self.logger.info('Volume switch [%5.4f]' % volume_switch)
 
-        if self.use_mpi:
-            self.logger.info('Using MPI with rank [%d]' % (self.mpi_rank))
-            if self.mpi_rank == 0:
+        it = 0
+        if self.resume and not self.logs['created']:
+            for f in glob.glob(os.path.join(self.logs['checkpoint'], 'checkpoint_*.txt')):
+                if int(f.split('/checkpoint_')[1].split('.txt')[0]) > it:
+                    it = int(f.split('/checkpoint_')[1].split('.txt')[0])
+
+        if it > 0:
+
+            with open(os.path.join(self.logs['checkpoint'], 'checkpoint_%s.txt' % it), 'r') as f:
+                data = json.load(f)
+                logz = data['logz']
+                h = data['h']
+                logvol = data['logvol']
+                ncall = data['ncall']
+                fraction_remain = data['fraction_remain']
+                method = data['method']
+
+            active_u = np.load(os.path.join(self.logs['checkpoint'], 'active_u_%s.npy' % it))
+            active_v = self.transform(active_u)
+            active_logl = np.load(os.path.join(self.logs['checkpoint'], 'active_logl_%s.npy' % it))
+            active_derived = np.load(os.path.join(self.logs['checkpoint'], 'active_derived_%s.npy' % it))
+            saved_v = np.load(os.path.join(self.logs['checkpoint'], 'saved_v.npy')).tolist()
+            saved_logl = np.load(os.path.join(self.logs['checkpoint'], 'saved_logl.npy')).tolist()
+            saved_logwt = np.load(os.path.join(self.logs['checkpoint'], 'saved_logwt.npy')).tolist()
+
+        else:
+
+            if self.use_mpi:
+                self.logger.info('Using MPI with rank [%d]' % (self.mpi_rank))
+                if self.mpi_rank == 0:
+                    active_u = 2 * (np.random.uniform(size=(self.num_live_points, self.x_dim)) - 0.5)
+                else:
+                    active_u = np.empty((self.num_live_points, self.x_dim), dtype=np.float64)
+                self.comm.Bcast(active_u, root=0)
+            else:
                 active_u = 2 * (np.random.uniform(size=(self.num_live_points, self.x_dim)) - 0.5)
-            else:
-                active_u = np.empty((self.num_live_points, self.x_dim), dtype=np.float64)
-            self.comm.Bcast(active_u, root=0)
-        else:
-            active_u = 2 * (np.random.uniform(size=(self.num_live_points, self.x_dim)) - 0.5)
-        active_v = self.transform(active_u)
+            active_v = self.transform(active_u)
 
-        if self.use_mpi:
-            if self.mpi_rank == 0:
-                chunks = [[] for _ in range(self.mpi_size)]
-                for i, chunk in enumerate(active_v):
-                    chunks[i % self.mpi_size].append(chunk)
+            if self.use_mpi:
+                if self.mpi_rank == 0:
+                    chunks = [[] for _ in range(self.mpi_size)]
+                    for i, chunk in enumerate(active_v):
+                        chunks[i % self.mpi_size].append(chunk)
+                else:
+                    chunks = None
+                data = self.comm.scatter(chunks, root=0)
+                active_logl = self.loglike(data)
+                recv_active_logl = self.comm.gather(active_logl, root=0)
+                recv_active_logl = self.comm.bcast(recv_active_logl, root=0)
+                active_logl = np.concatenate(recv_active_logl, axis=0)
             else:
-                chunks = None
-            data = self.comm.scatter(chunks, root=0)
-            active_logl = self.loglike(data)
-            recv_active_logl = self.comm.gather(active_logl, root=0)
-            recv_active_logl = self.comm.bcast(recv_active_logl, root=0)
-            active_logl = np.concatenate(recv_active_logl, axis=0)
-        else:
-            active_logl, active_derived = self.loglike(active_v)
+                active_logl, active_derived = self.loglike(active_v)
 
-        saved_v = []  # Stored points for posterior results
-        saved_logl = []
-        saved_logwt = []
-        h = 0.0  # Information, initially 0.
-        logz = -1e300  # ln(Evidence Z), initially Z=0
-        logvol = np.log(1.0 - np.exp(-1.0 / self.num_live_points))
-        fraction_remain = 1.0
-        ncall = self.num_live_points  # number of calls we already made
+            saved_v = []  # Stored points for posterior results
+            saved_logl = []
+            saved_logwt = []
+
+            h = 0.0  # Information, initially 0.
+            logz = -1e300  # ln(Evidence Z), initially Z=0
+            logvol = np.log(1.0 - np.exp(-1.0 / self.num_live_points))
+            fraction_remain = 1.0
+            ncall = self.num_live_points  # number of calls we already made
+
         first_time = True
         nb = self.mpi_size * mcmc_batch_size
         rejection_sample = volume_switch < 1
         ncs = []
 
-        for it in range(0, max_iters):
+        for it in range(it, max_iters):
 
             # Worst object in collection and its weight (= volume * likelihood)
             worst = np.argmin(active_logl)
@@ -287,12 +318,8 @@ class NestedSampler(Sampler):
                         'scale [%5.4f]' % (it, loglstar, np.max(active_logl), logz, expected_vol, ncall, scale))
                     with open(os.path.join(self.logs['results'], 'results.csv'), 'a') as f:
                         writer = csv.writer(f)
-                        writer.writerow([it, acceptance, np.min(ess), np.max(
-                            ess), jump_distance, scale, loglstar, logz, fraction_remain, ncall])
-
-            if it % log_interval == 0 and self.log:
-                np.save(os.path.join(self.logs['extra'], 'active_%s.npy' % it), active_v)
-                self._save_samples(np.array(saved_v), np.exp(np.array(saved_logwt) - logz), np.array(saved_logl))
+                        writer.writerow([it, acceptance, np.min(ess), np.max(ess),
+                                         jump_distance, scale, loglstar, logz, fraction_remain, ncall])
 
             # Shrink interval
             logvol -= 1.0 / self.num_live_points
@@ -301,6 +328,18 @@ class NestedSampler(Sampler):
 
             if self.log:
                 self.trainer.writer.add_scalar('logz', logz, it)
+
+            if it % log_interval == 0 and self.log:
+                np.save(os.path.join(self.logs['checkpoint'], 'active_u_%s.npy' % it), active_u)
+                np.save(os.path.join(self.logs['checkpoint'], 'active_logl_%s.npy' % it), active_logl)
+                np.save(os.path.join(self.logs['checkpoint'], 'active_derived_%s.npy' % it), active_derived)
+                np.save(os.path.join(self.logs['checkpoint'], 'saved_v.npy'), saved_v)
+                np.save(os.path.join(self.logs['checkpoint'], 'saved_logl.npy'), saved_logl)
+                np.save(os.path.join(self.logs['checkpoint'], 'saved_logwt.npy'), saved_logwt)
+                with open(os.path.join(self.logs['checkpoint'], 'checkpoint_%s.txt' % it), 'w') as f:
+                    json.dump({'logz': logz, 'h': h,  'logvol': logvol, 'ncall': ncall,
+                               'fraction_remain': fraction_remain, 'method': method}, f)
+                self._save_samples(np.array(saved_v), np.exp(np.array(saved_logwt) - logz), np.array(saved_logl))
 
             # Stopping criterion
             if fraction_remain < dlogz:

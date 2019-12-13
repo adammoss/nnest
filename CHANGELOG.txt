@@ -1,6 +1,11 @@
 Changelog
 =========
 
+0.3.0 (XX.XX.XXXX) - IN DEVELOPMENT
+~~~~~~~~~~~~~~~~~~
+
+* Added resume option
+
 0.2.0 (11.12.2019)
 ~~~~~~~~~~~~~~~~~~
 

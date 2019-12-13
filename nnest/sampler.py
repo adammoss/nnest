@@ -33,6 +33,7 @@ class Sampler(object):
                  num_blocks=5,
                  num_layers=2,
                  log_dir='logs/test',
+                 resume=True,
                  use_gpu=False,
                  base_dist=None,
                  scale=''
@@ -100,6 +101,8 @@ class Sampler(object):
             self._save_params(args)
         else:
             log_dir = None
+
+        self.resume = resume
 
         self.logger = create_logger(__name__)
 

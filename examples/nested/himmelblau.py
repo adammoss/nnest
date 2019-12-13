@@ -52,7 +52,6 @@ if __name__ == '__main__':
     parser.add_argument('--noise', type=float, default=-1)
     parser.add_argument("--test_samples", type=int, default=0)
     parser.add_argument("--test_mcmc_steps", type=int, default=1000)
-    parser.add_argument('--run_num', type=str, default='')
     parser.add_argument('--num_slow', type=int, default=0)
     parser.add_argument('--log_dir', type=str, default='logs/himmelblau')
     parser.add_argument('--base_dist', type=str, default='')
