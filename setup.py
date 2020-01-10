@@ -23,5 +23,7 @@ setup(
               "pandas",
               "scikit-learn",
               "tqdm",
-              "pillow"],
+              "pillow",
+              "getdist"
+            ],
 )
