@@ -5,7 +5,7 @@ from setuptools import find_packages, setup
 
 setup(
     name="nnest",
-    version="0.2.0",
+    version="0.2.1",
     description="Neural network nested sampling",
     author="Adam Moss",
     author_email="adam.moss@nottingham.ac.uk",
@@ -21,7 +21,7 @@ setup(
               "scipy",
               "matplotlib",
               "pandas",
-              "scikitlearn",
+              "scikit-learn",
               "tqdm",
               "pillow"],
 )

@@ -113,6 +113,8 @@ class NestedSampler(Sampler):
 
         if it > 0:
 
+            self.logger.info('Using checkpoint [%d]' % it)
+
             with open(os.path.join(self.logs['checkpoint'], 'checkpoint_%s.txt' % it), 'r') as f:
                 data = json.load(f)
                 logz = data['logz']
