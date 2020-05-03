@@ -1,7 +1,13 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 
+import os
 from setuptools import find_packages, setup
+
+def readfile(filename):
+    with open(filename, encoding="utf-8") as fp:
+        filecontents = fp.read()
+    return filecontents
 
 setup(
     name="nnest",
@@ -15,13 +21,7 @@ setup(
     license="MIT",
     packages=find_packages(),
     provides=["nnest"],
-    install_requires=["torch>=1.3.1",
-              "tensorboard>=1.14",
-              "numpy",
-              "scipy",
-              "matplotlib",
-              "pandas",
-              "scikitlearn",
-              "tqdm",
-              "pillow"],
+    install_requires=readfile(
+        os.path.join(os.path.dirname(__file__), "requirements.txt")
+    )
 )
