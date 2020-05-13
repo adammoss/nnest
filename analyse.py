@@ -47,6 +47,7 @@ def main(args):
             logzs = []
             dlogzs = []
             nlikes = []
+            ess = []
 
             if len(log_dim_dir) > 0:
                 print()
@@ -85,12 +86,14 @@ def main(args):
                         logzs.append(results['logz'])
                         dlogzs.append(results['logzerr'])
                         nlikes.append(results['ncall'])
+                        ess.append(np.sum(mc.weights) ** 2 / np.sum(mc.weights ** 2))
 
             if len(logzs) > 1:
                 print()
                 print(r'Log Z: $%4.2f \pm %4.2f$' % (np.mean(logzs), np.std(logzs)))
                 print(r'Log Z error estimate: $%4.2f \pm %4.2f$' % (np.mean(dlogzs), np.std(dlogzs)))
                 print(r'N_like: $%.0f \pm %.0f$' % (np.mean(nlikes), np.std(nlikes)))
+                print(r'Posterior ESS: $%.0f \pm %.0f$' % (np.mean(ess), np.std(ess)))
 
 
 if __name__ == '__main__':
