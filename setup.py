@@ -4,6 +4,7 @@
 import os
 from setuptools import find_packages, setup
 
+
 def readfile(filename):
     with open(filename, encoding="utf-8") as fp:
         filecontents = fp.read()
@@ -11,7 +12,7 @@ def readfile(filename):
 
 setup(
     name="nnest",
-    version="0.2.0",
+    version="0.3.0",
     description="Neural network nested sampling",
     author="Adam Moss",
     author_email="adam.moss@nottingham.ac.uk",

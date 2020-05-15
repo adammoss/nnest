@@ -14,13 +14,13 @@ import getdist.plots
 
 def main(args):
 
-    if args.log_root:
-        log_roots = [args.log_root]
+    if args.root:
+        log_roots = [args.root]
     else:
         log_roots = glob.glob('logs/*')
 
-    if args.x_dim != 0:
-        x_dims = [args.x_dim]
+    if args.dim != 0:
+        x_dims = [args.dim]
     else:
         x_dims = range(2, 50)
 
@@ -33,7 +33,7 @@ def main(args):
         print()
 
         # Find
-        log_dim_dirs = [[] for x_dim in x_dims]
+        log_dim_dirs = [[] for _ in x_dims]
         for ix, x_dim in enumerate(x_dims):
             for log_dir in glob.glob(os.path.join(log_root, 'run*')):
                 if os.path.exists(os.path.join(log_dir, 'info', 'params.txt')):
@@ -47,6 +47,7 @@ def main(args):
             logzs = []
             dlogzs = []
             nlikes = []
+            ess = []
 
             if len(log_dim_dir) > 0:
                 print()
@@ -71,9 +72,10 @@ def main(args):
                         mc = getdist.MCSamples(os.path.join(log_dir, 'chains', 'chain.txt'), names=names, labels=labels,
                                                ignore_rows=0.3)
                     mc.readChains(files)
-                    print(mc.getMargeStats())
+                    if args.feedback > 0:
+                        print(mc.getMargeStats())
 
-                    if not args.no_plot:
+                    if args.plot:
                         g = getdist.plots.getSubplotPlotter()
                         g.triangle_plot(mc, filled=True)
                         g.export(os.path.join(os.path.join(log_dir, 'plots', 'triangle.png')))
@@ -85,20 +87,24 @@ def main(args):
                         logzs.append(results['logz'])
                         dlogzs.append(results['logzerr'])
                         nlikes.append(results['ncall'])
+                        ess.append(np.sum(mc.weights) ** 2 / np.sum(mc.weights ** 2))
 
             if len(logzs) > 1:
                 print()
+                print('Num runs: %s' % (len(logzs)))
                 print(r'Log Z: $%4.2f \pm %4.2f$' % (np.mean(logzs), np.std(logzs)))
                 print(r'Log Z error estimate: $%4.2f \pm %4.2f$' % (np.mean(dlogzs), np.std(dlogzs)))
                 print(r'N_like: $%.0f \pm %.0f$' % (np.mean(nlikes), np.std(nlikes)))
+                print(r'Posterior ESS: $%.0f \pm %.0f$' % (np.mean(ess), np.std(ess)))
 
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
 
-    parser.add_argument('--log_root', type=str, default='')
-    parser.add_argument('--x_dim', type=int, default=0)
-    parser.add_argument('-no_plot', action='store_true')
+    parser.add_argument('--root', type=str, default='')
+    parser.add_argument('--dim', type=int, default=0)
+    parser.add_argument('--feedback', type=int, default=0)
+    parser.add_argument('-plot', action='store_true')
 
     args = parser.parse_args()
     main(args)

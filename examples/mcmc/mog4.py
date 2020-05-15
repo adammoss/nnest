@@ -95,7 +95,6 @@ if __name__ == '__main__':
     parser.add_argument('--flow', type=str, default='nvp')
     parser.add_argument('--num_blocks', type=int, default=5)
     parser.add_argument('--noise', type=float, default=-1)
-    parser.add_argument('--run_num', type=str, default='')
     parser.add_argument('--num_slow', type=int, default=0)
     parser.add_argument('--log_dir', type=str, default='logs/mog4_mcmc')
 
