@@ -8,12 +8,13 @@ import errno
 
 def create_logger(module_name, level=logging.INFO):
     logger = logging.getLogger(module_name)
-    logger.setLevel(level)
-    handler = logging.StreamHandler(sys.stdout)
-    handler.setLevel(level)
-    formatter = logging.Formatter('[{}] [%(levelname)s] %(message)s'.format(module_name))
-    handler.setFormatter(formatter)
-    logger.addHandler(handler)
+    if not getattr(logger, 'handler_set', None):
+        logger.setLevel(level)
+        handler = logging.StreamHandler(sys.stdout)
+        handler.setLevel(level)
+        formatter = logging.Formatter('[{}] [%(levelname)s] %(message)s'.format(module_name))
+        handler.setFormatter(formatter)
+        logger.addHandler(handler)
     return logger
 
 
