@@ -15,6 +15,7 @@ def create_logger(module_name, level=logging.INFO):
         formatter = logging.Formatter('[{}] [%(levelname)s] %(message)s'.format(module_name))
         handler.setFormatter(formatter)
         logger.addHandler(handler)
+        logger.propagate = False
     return logger
 
 
