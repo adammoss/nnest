@@ -197,7 +197,11 @@ class SingleSpeed(nn.Module):
         self.num_inputs = num_inputs
 
         if base_dist is None:
-            self.base_dist = distributions.MultivariateNormal(torch.zeros(num_inputs), torch.eye(num_inputs))
+            if device is not None:
+                self.base_dist = distributions.MultivariateNormal(torch.zeros(num_inputs).to(device),
+                                                                  torch.eye(num_inputs).to(device))
+            else:
+                self.base_dist = distributions.MultivariateNormal(torch.zeros(num_inputs), torch.eye(num_inputs))
         else:
             self.base_dist = base_dist
 
