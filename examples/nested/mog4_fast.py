@@ -6,7 +6,8 @@ import copy
 import numpy as np
 import scipy.special
 
-sys.path.append(os.getcwd())
+path = os.path.realpath(os.path.join(os.getcwd(), '../..'))
+sys.path.insert(0, path)
 
 
 def log_gaussian_pdf(theta, sigma=1, mu=0, ndim=None):
@@ -96,7 +97,7 @@ if __name__ == '__main__':
     parser.add_argument('--num_blocks', type=int, default=5)
     parser.add_argument('--noise', type=float, default=-1)
     parser.add_argument('--num_slow', type=int, default=2)
-    parser.add_argument('--log_dir', type=str, default='logs/mog4_fast')
+    parser.add_argument('--log_dir', type=str, default='')
 
     args = parser.parse_args()
     main(args)

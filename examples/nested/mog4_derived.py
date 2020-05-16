@@ -7,7 +7,8 @@ import numpy as np
 import scipy.special
 import torch
 
-sys.path.append(os.getcwd())
+path = os.path.realpath(os.path.join(os.getcwd(), '../..'))
+sys.path.insert(0, path)
 
 
 def log_gaussian_pdf(theta, sigma=1, mu=0, ndim=None):
@@ -107,7 +108,7 @@ if __name__ == '__main__':
     parser.add_argument('--num_derived', type=int, default=1)
     parser.add_argument('--log_dir', type=str, default='logs/mog4')
     parser.add_argument('--base_dist', type=str, default='')
-    parser.add_argument('--scale', type=str, default='constant')
+    parser.add_argument('--scale', type=str, default='')
     parser.add_argument('--beta', type=float, default=8.0)
 
     args = parser.parse_args()
