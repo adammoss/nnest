@@ -51,7 +51,7 @@ class NestedSampler(Sampler):
                                             use_gpu=use_gpu, base_dist=base_dist, scale=scale)
 
         if self.log:
-            self.logger.info('Num live points [%d]' % (self.num_live_points))
+            self.logger.info('Num live points [%d]' % self.num_live_points)
 
         if self.log:
             with open(os.path.join(self.logs['results'], 'results.csv'), 'w') as f:
@@ -331,6 +331,10 @@ class NestedSampler(Sampler):
             if self.log:
                 self.trainer.writer.add_scalar('logz', logz, it)
 
+            self.samples = np.array(saved_v)
+            self.weights = np.exp(np.array(saved_logwt) - logz)
+            self.likes = np.array(saved_logl)
+
             if it % log_interval == 0 and self.log:
                 np.save(os.path.join(self.logs['checkpoint'], 'active_u_%s.npy' % it), active_u)
                 np.save(os.path.join(self.logs['checkpoint'], 'active_logl_%s.npy' % it), active_logl)
@@ -341,7 +345,7 @@ class NestedSampler(Sampler):
                 with open(os.path.join(self.logs['checkpoint'], 'checkpoint_%s.txt' % it), 'w') as f:
                     json.dump({'logz': logz, 'h': h,  'logvol': logvol, 'ncall': ncall,
                                'fraction_remain': fraction_remain, 'method': method}, f)
-                self._save_samples(np.array(saved_v), np.exp(np.array(saved_logwt) - logz), np.array(saved_logl))
+                self._save_samples(self.samples, self.weights, self.likes)
 
             # Stopping criterion
             if fraction_remain < dlogz:
@@ -357,12 +361,14 @@ class NestedSampler(Sampler):
             saved_logwt.append(logwt)
             saved_logl.append(active_logl[i])
 
+        self.logz = logz
+
         if self.log:
             with open(os.path.join(self.logs['results'], 'final.csv'), 'w') as f:
                 writer = csv.writer(f)
                 writer.writerow(['niter', 'ncall', 'logz', 'logzerr', 'h'])
                 writer.writerow([it + 1, ncall, logz, np.sqrt(h / self.num_live_points), h])
-            self._save_samples(np.array(saved_v), np.exp(np.array(saved_logwt) - logz), np.array(saved_logl))
+            self._save_samples(self.samples, self.weights, self.likes)
 
         print("niter: {:d}\n ncall: {:d}\n nsamples: {:d}\n logz: {:6.3f} +/- {:6.3f}\n h: {:6.3f}"
               .format(it + 1, ncall, len(np.array(saved_v)), logz, np.sqrt(h / self.num_live_points), h))

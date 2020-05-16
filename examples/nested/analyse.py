@@ -14,10 +14,7 @@ import getdist.plots
 
 def main(args):
 
-    if args.root:
-        log_roots = [args.root]
-    else:
-        log_roots = glob.glob('logs/*')
+    log_roots = glob.glob(args.root)
 
     if args.dim != 0:
         x_dims = [args.dim]
@@ -101,7 +98,7 @@ def main(args):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
 
-    parser.add_argument('--root', type=str, default='')
+    parser.add_argument('--root', type=str, default='logs/*')
     parser.add_argument('--dim', type=int, default=0)
     parser.add_argument('--feedback', type=int, default=0)
     parser.add_argument('-plot', action='store_true')
