@@ -17,8 +17,6 @@ from torch.utils.tensorboard import SummaryWriter
 import numpy as np
 from sklearn.model_selection import train_test_split
 import scipy.spatial
-from tqdm import tqdm
-
 import matplotlib
 
 matplotlib.use('Agg')
@@ -31,16 +29,15 @@ from nnest.utils.logger import create_logger
 class Trainer(object):
 
     def __init__(self,
-                 xdim,
-                 ndim,
-                 nslow=0,
+                 x_dim,
+                 hidden_dim,
+                 num_slow=0,
                  batch_size=100,
                  flow='nvp',
                  scale='',
                  num_blocks=5,
                  num_layers=2,
                  base_dist=None,
-                 oversample_rate=-1,
                  train=True,
                  load_model='',
                  log_dir='logs',
@@ -51,27 +48,22 @@ class Trainer(object):
         self.device = torch.device(
             'cuda' if use_gpu and torch.cuda.is_available() else 'cpu')
 
-        self.x_dim = xdim
-        self.z_dim = xdim
+        self.x_dim = x_dim
+        self.z_dim = x_dim
 
         self.batch_size = batch_size
         self.total_iters = 0
 
-        assert xdim > nslow
-        nfast = xdim - nslow
-        self.nslow = nslow
-
-        if oversample_rate > 0:
-            self.oversample_rate = oversample_rate
-        else:
-            self.oversample_rate = nfast / xdim
+        assert x_dim > num_slow
+        num_fast = x_dim - num_slow
+        self.num_slow = num_slow
 
         if flow.lower() == 'nvp':
-            if nslow > 0:
-                self.netG = FastSlow(nfast, nslow, ndim, num_blocks, num_layers, device=self.device,
+            if num_slow > 0:
+                self.netG = FastSlow(num_fast, num_slow, hidden_dim, num_blocks, num_layers, device=self.device,
                                      scale=scale, base_dist=base_dist)
             else:
-                self.netG = SingleSpeed(xdim, ndim, num_blocks, num_layers, device=self.device,
+                self.netG = SingleSpeed(x_dim, hidden_dim, num_blocks, num_layers, device=self.device,
                                         scale=scale, base_dist=base_dist)
         else:
             raise NotImplementedError
@@ -193,235 +185,6 @@ class Trainer(object):
         self.logger.info('Best epoch [%i] validation loss [%5.4f]' % (best_validation_epoch, best_validation_loss))
 
         self.netG.load_state_dict(best_model.state_dict())
-
-    def rejection_sample(
-            self,
-            loglike,
-            loglstar,
-            init_x=None,
-            transform=None,
-            max_prior=None,
-            enlargement_factor=1.3,
-            constant_efficiency_factor=None):
-
-        self.netG.eval()
-
-        if transform is None:
-            def transform(x): return x
-
-        if init_x is not None:
-            z, log_det_J = self.netG(torch.from_numpy(init_x).float().to(self.device))
-            # We want max det dx/dz to set envelope for rejection sampling
-            m = torch.max(-log_det_J)
-            z = z.detach().cpu().numpy()
-            r = np.max(np.linalg.norm(z, axis=1))
-        else:
-            r = 1
-
-        if constant_efficiency_factor is not None:
-            enlargement_factor = (1 / constant_efficiency_factor) ** (1 / self.x_dim)
-
-        nc = 0
-        while True:
-            if hasattr(self.netG.base_dist, 'usample'):
-                z = self.netG.base_dist.usample(sample_shape=(1,)) * enlargement_factor
-            else:
-                z = np.random.randn(self.x_dim)
-                z = enlargement_factor * r * z * np.random.rand() ** (1. / self.x_dim) / np.sqrt(np.sum(z ** 2))
-                z = np.expand_dims(z, 0)
-            x, log_det_J = self.netG(torch.from_numpy(z).float().to(self.device), mode='inverse')
-            delta_log_det_J = (log_det_J - m).detach()
-            log_ratio_1 = delta_log_det_J.squeeze(dim=1)
-            x = x.detach().cpu().numpy()
-
-            # Check not out of prior range
-            if np.any(np.abs(x) > max_prior):
-                continue
-
-            # Check volume constraint
-            rnd_u = torch.rand(log_ratio_1.shape, device=self.device)
-            ratio = (log_ratio_1).exp().clamp(max=1)
-            if rnd_u > ratio:
-                continue
-
-            logl = loglike(transform(x))
-            idx = np.where(np.isfinite(logl) & (logl < loglstar))[0]
-            log_ratio_1[idx] = -np.inf
-            ratio = (log_ratio_1).exp().clamp(max=1)
-
-            nc += 1
-            if rnd_u < ratio:
-                break
-
-        return x, logl, nc
-
-    def mcmc_sample(
-            self,
-            loglike,
-            mcmc_steps=20,
-            alpha=1.0,
-            dynamic=True,
-            batch_size=1,
-            init_x=None,
-            loglstar=None,
-            transform=None,
-            show_progress=False,
-            plot=False,
-            out_chain=None,
-            max_prior=None,
-            max_start_tries=100):
-
-        self.netG.eval()
-
-        samples = []
-        derived_samples = []
-        likes = []
-
-        if transform is None:
-            def transform(x): return x
-
-        if init_x is not None:
-            batch_size = init_x.shape[0]
-            z, _ = self.netG(torch.from_numpy(init_x).float().to(self.device))
-            z = z.detach()
-            # Add the backward version of x rather than init_x due to numerical precision
-            x, _ = self.netG(z, mode='inverse')
-            x = x.detach().cpu().numpy()
-            logl, derived = loglike(transform(x))
-        else:
-            for i in range(max_start_tries):
-                z = torch.randn(batch_size, self.z_dim, device=self.device)
-                x, _ = self.netG(z, mode='inverse')
-                x = x.detach().cpu().numpy()
-                logl, derived = loglike(transform(x))
-                if np.all(logl > -1e30):
-                    break
-                if i == max_start_tries - 1:
-                    raise Exception('Could not find starting value')
-
-        samples.append(x)
-        derived_samples.append(derived)
-        likes.append(logl)
-
-        iters = range(mcmc_steps)
-        if show_progress:
-            iters = tqdm(iters)
-
-        scale = alpha
-        accept = 0
-        reject = 0
-        ncall = 0
-
-        if out_chain is not None:
-            if batch_size == 1:
-                files = [open(out_chain + '.txt', 'w')]
-            else:
-                files = [open(out_chain + '_%s.txt' % (ib + 1), 'w') for ib in range(batch_size)]
-
-        for _ in iters:
-
-            dz = torch.randn_like(z) * scale
-            if self.nslow > 0 and np.random.uniform() < self.oversample_rate:
-                fast = True
-                dz[:, 0:self.nslow] = 0.0
-            else:
-                fast = False
-            z_prime = z + dz
-
-            # Jacobian is det d f^{-1} (z)/dz
-            x, log_det_J = self.netG(z, mode='inverse')
-            x_prime, log_det_J_prime = self.netG(z_prime, mode='inverse')
-            x = x.detach().cpu().numpy()
-            x_prime = x_prime.detach().cpu().numpy()
-            delta_log_det_J = (log_det_J_prime - log_det_J).detach()
-            log_ratio_1 = delta_log_det_J.squeeze(dim=1)
-
-            # Check not out of prior range
-            if max_prior is not None:
-                prior = np.logical_or(np.abs(x) > max_prior, np.abs(x_prime) > max_prior)
-                idx = np.where([np.any(p) for p in prior])
-                log_ratio_1[idx] = -np.inf
-
-            rnd_u = torch.rand(log_ratio_1.shape, device=self.device)
-            ratio = log_ratio_1.exp().clamp(max=1)
-            mask = (rnd_u < ratio).int()
-            logl_prime = np.full(batch_size, logl)
-            derived_prime = np.copy(derived)
-
-            # Only evaluate likelihood if prior and volume is accepted
-            if loglike is not None and transform is not None:
-                for idx, im in enumerate(mask):
-                    if im:
-                        if not fast:
-                            ncall += 1
-                        lp, der = loglike(transform(x_prime[idx]))
-                        if loglstar is not None:
-                            if np.isfinite(lp) and lp >= loglstar:
-                                logl_prime[idx] = lp
-                                derived_prime[idx] = der
-                            else:
-                                mask[idx] = 0
-                        else:
-                            if lp >= logl[idx]:
-                                logl_prime[idx] = lp
-                            elif rnd_u[idx].cpu().numpy() < np.clip(np.exp(lp - logl[idx]), 0, 1):
-                                logl_prime[idx] = lp
-                                derived_prime[idx] = der
-                            else:
-                                mask[idx] = 0
-
-            if 2 * torch.sum(mask).cpu().numpy() > batch_size:
-                accept += 1
-            else:
-                reject += 1
-
-            if dynamic:
-                if accept > reject:
-                    scale *= np.exp(1. / accept)
-                if accept < reject:
-                    scale /= np.exp(1. / reject)
-
-            m = mask[:, None].float()
-            z = (z_prime * m + z * (1 - m)).detach()
-            derived = derived_prime * m.cpu().numpy() + derived * (1 - m.cpu().numpy())
-
-            m = mask
-            logl = logl_prime * m.cpu().numpy() + logl * (1 - m.cpu().numpy())
-
-            x, _ = self.netG(z, mode='inverse')
-            x = x.detach().cpu().numpy()
-            samples.append(x)
-            derived_samples.append(derived)
-            likes.append(logl)
-
-            if out_chain is not None:
-                v = transform(x)
-                for ib in range(batch_size):
-                    files[ib].write("%.5E " % 1)
-                    files[ib].write("%.5E " % -logl[ib])
-                    files[ib].write(" ".join(["%.5E" % vi for vi in v[ib]]))
-                    files[ib].write(" ".join(["%.5E" % vi for vi in derived[ib]]))
-                    files[ib].write("\n")
-                    files[ib].flush()
-
-        # Transpose samples so shape is (chain_num, iteration, dim)
-        samples = np.transpose(np.array(samples), axes=[1, 0, 2])
-        derived_samples = np.transpose(np.array(derived_samples), axes=[1, 0, 2])
-        likes = np.transpose(np.array(likes), axes=[1, 0])
-
-        if self.path and plot:
-            cmap = plt.cm.jet
-            cmap.set_under('w', 1)
-            fig, ax = plt.subplots()
-            ax.hist2d(samples[:, -1, 0], samples[:, -1, 1], bins=200, cmap=cmap, vmin=1, alpha=0.2)
-            if self.writer is not None:
-                self.writer.add_figure('chain', fig, self.total_iters)
-
-        if out_chain is not None:
-            for ib in range(batch_size):
-                files[ib].close()
-
-        return samples, derived_samples, likes, scale, ncall
 
     def _jacobian(self, z):
         """ Calculate det d f^{-1} (z)/dz
