@@ -106,7 +106,7 @@ class Trainer(object):
             max_iters=5000,
             log_interval=50,
             save_interval=50,
-            noise=0.0,
+            jitter=0.0,
             validation_fraction=0.1,
             patience=50):
 
@@ -120,16 +120,16 @@ class Trainer(object):
                 os.path.join(self.path, 'data', 'originals.npy'),
                 samples)
 
-        if noise < 0:
+        if jitter < 0:
             kdt = scipy.spatial.cKDTree(samples)
             dists, neighs = kdt.query(samples, 2)
-            training_noise = .2 * np.mean(dists)
+            training_jitter = .2 * np.mean(dists)
         else:
-            training_noise = noise
+            training_jitter = jitter
 
         if self.log:
             self.logger.info('Number of training samples [%d]' % samples.shape[0])
-            self.logger.info('Training noise [%5.4f]' % training_noise)
+            self.logger.info('Training jitter [%5.4f]' % training_jitter)
 
         X_train, X_valid = train_test_split(
             samples, test_size=validation_fraction)
@@ -154,9 +154,8 @@ class Trainer(object):
 
             self.total_iters += 1
 
-            train_loss = self._train(
-                epoch, self.netG, train_loader, noise=training_noise)
-            validation_loss = self._validate(epoch, self.netG, valid_loader)
+            train_loss = self._train(epoch, train_loader, jitter=training_jitter)
+            validation_loss = self._validate(epoch, valid_loader)
 
             if validation_loss < best_validation_loss:
                 best_validation_epoch = epoch
@@ -175,7 +174,7 @@ class Trainer(object):
                         self.netG.state_dict(),
                         os.path.join(self.path, 'models', 'netG.pt')
                     )
-                    self._train_plot(self.netG, samples)
+                    self._train_plot(samples)
 
             counter += 1
 
@@ -186,6 +185,22 @@ class Trainer(object):
         self.logger.info('Best epoch [%i] validation loss [%5.4f]' % (best_validation_epoch, best_validation_loss))
 
         self.netG.load_state_dict(best_model.state_dict())
+
+    def get_latent_samples(self, x):
+        if type(x) is np.ndarray:
+            z, _ = self.netG(torch.from_numpy(x).float().to(self.device))
+        else:
+            z, _ = self.netG(x)
+        z = z.detach().cpu().numpy()
+        return z
+
+    def get_samples(self, z):
+        if type(z) is np.ndarray:
+            x, _ = self.netG(torch.from_numpy(z).float().to(self.device), mode='inverse')
+        else:
+            x, _ = self.netG(z, mode='inverse')
+        x = x.detach().cpu().numpy()
+        return x
 
     def _jacobian(self, z):
         """ Calculate det d f^{-1} (z)/dz
@@ -198,9 +213,9 @@ class Trainer(object):
         return torch.stack([torch.log(torch.abs(torch.det(J[i, :, :])))
                             for i in range(x.shape[0])])
 
-    def _train(self, epoch, model, loader, noise=0.0):
+    def _train(self, epoch, loader, jitter=0.0):
 
-        model.train()
+        self.netG.train()
         train_loss = 0
 
         for batch_idx, data in enumerate(loader):
@@ -211,29 +226,29 @@ class Trainer(object):
                 else:
                     cond_data = None
                 data = data[0]
-            data = (data + noise * torch.randn_like(data)).to(self.device)
+            data = (data + jitter * torch.randn_like(data)).to(self.device)
             self.optimizer.zero_grad()
-            loss = -model.log_probs(data, cond_data).mean()
+            loss = -self.netG.log_probs(data, cond_data).mean()
             train_loss += loss.item()
             loss.backward()
             self.optimizer.step()
 
-        for module in model.modules():
+        for module in self.netG.modules():
             if isinstance(module, BatchNormFlow):
                 module.momentum = 0
 
         with torch.no_grad():
-            model(loader.dataset.tensors[0].to(data.device))
+            self.netG(loader.dataset.tensors[0].to(data.device))
 
-        for module in model.modules():
+        for module in self.netG.modules():
             if isinstance(module, BatchNormFlow):
                 module.momentum = 1
 
         return train_loss / len(loader.dataset)
 
-    def _validate(self, epoch, model, loader):
+    def _validate(self, epoch, loader):
 
-        model.eval()
+        self.netG.eval()
         val_loss = 0
         cond_data = None
 
@@ -246,17 +261,16 @@ class Trainer(object):
             data = data.to(self.device)
             with torch.no_grad():
                 # sum up batch loss
-                val_loss += -model.log_probs(data, cond_data).mean().item()
+                val_loss += -self.netG.log_probs(data, cond_data).mean().item()
 
         return val_loss / len(loader.dataset)
 
-    def _train_plot(self, model, samples, plot_grid=True):
+    def _train_plot(self, samples, plot_grid=True):
 
-        model.eval()
+        self.netG.eval()
         with torch.no_grad():
-            x_synth = model.sample(samples.size).detach().cpu().numpy()
-            z, _ = model(torch.from_numpy(samples).float().to(self.device))
-            z = z.detach().cpu().numpy()
+            x_synth = self.netG.sample(samples.size).detach().cpu().numpy()
+            z = self.get_latent_samples(samples)
             if plot_grid and self.x_dim == 2:
                 grid = []
                 for x in np.linspace(np.min(samples[:, 0]), np.max(samples[:, 0]), 10):
@@ -266,8 +280,7 @@ class Trainer(object):
                     for x in np.linspace(np.min(samples[:, 0]), np.max(samples[:, 0]), 5000):
                         grid.append([x, y])
                 grid = np.array(grid)
-                z_grid, _ = model(torch.from_numpy(grid).float().to(self.device))
-                z_grid = z_grid.detach().cpu().numpy()
+                z_grid = self.get_latent_samples(grid)
 
         if self.writer is not None:
             fig, ax = plt.subplots(2, figsize=(5, 10))

@@ -71,8 +71,8 @@ class NestedSampler(MCMCSampler):
             dlogz=0.5,
             train_iters=500,
             volume_switch=-1.0,
-            stepsize=0.0,
-            noise=-1.0,
+            step_size=0.0,
+            jitter=-1.0,
             num_test_mcmc_samples=0,
             test_mcmc_steps=1000,
             test_mcmc_burn_in=0):
@@ -97,12 +97,12 @@ class NestedSampler(MCMCSampler):
         if mcmc_steps <= 0:
             mcmc_steps = 5 * self.x_dim
 
-        if stepsize == 0.0:
-            stepsize = 2 / self.x_dim ** 0.5
+        if step_size == 0.0:
+            step_size = 2 / self.x_dim ** 0.5
 
         if self.log:
             self.logger.info('MCMC steps [%d]' % mcmc_steps)
-            self.logger.info('Initial scale [%5.4f]' % stepsize)
+            self.logger.info('Initial scale [%5.4f]' % step_size)
             self.logger.info('Volume switch [%5.4f]' % volume_switch)
 
         it = 0
@@ -202,15 +202,15 @@ class NestedSampler(MCMCSampler):
 
             # Train flow
             if first_time or it % update_interval == 0:
-                self.trainer.train(active_u, max_iters=train_iters, noise=noise)
+                self.trainer.train(active_u, max_iters=train_iters, jitter=jitter)
 
                 if num_test_mcmc_samples > 0:
                     # Test multiple chains from worst point to check mixing
                     init_x = np.concatenate(
                         [active_u[worst:worst + 1, :] for i in range(num_test_mcmc_samples)])
-                    test_samples, _, _, _, scale, _ = self.mcmc_sample(
+                    test_samples, _, _, _, _, scale, _ = self.mcmc_sample(
                         init_x=init_x, loglstar=loglstar, mcmc_steps=test_mcmc_steps + test_mcmc_burn_in,
-                        max_prior=1, stepsize=stepsize, dynamic_stepsize=True)
+                        max_prior=1, step_size=step_size, dynamic_step_size=True)
                     np.save(os.path.join(self.logs['chains'], 'test_samples.npy'), test_samples)
                     self._chain_stats(test_samples, mean=np.mean(active_u, axis=0), std=np.std(active_u, axis=0))
                 first_time = False
@@ -284,9 +284,9 @@ class NestedSampler(MCMCSampler):
                         idx = np.random.randint(
                             low=0, high=self.num_live_points, size=mcmc_num_chains)
                         init_x = active_u[idx, :]
-                        samples, derived_samples, likes, scale, nc = self.mcmc_sample(
+                        samples, latent_samples, derived_samples, likes, scale, nc = self.mcmc_sample(
                             init_x=init_x, loglstar=loglstar, mcmc_steps=mcmc_steps + mcmc_burn_in,
-                            max_prior=1, stepsize=stepsize, dynamic_stepsize=True)
+                            max_prior=1, step_size=step_size, dynamic_step_size=True)
                         if self.use_mpi:
                             recv_samples = self.comm.gather(samples, root=0)
                             recv_likes = self.comm.gather(likes, root=0)
@@ -360,6 +360,9 @@ class NestedSampler(MCMCSampler):
             saved_logl.append(active_logl[i])
 
         self.logz = logz
+        self.samples = np.array(saved_v)
+        self.weights = np.exp(np.array(saved_logwt) - logz)
+        self.loglikes = -np.array(saved_logl)
 
         if self.log:
             with open(os.path.join(self.logs['results'], 'final.csv'), 'w') as f:

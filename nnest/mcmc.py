@@ -17,7 +17,6 @@ from getdist.mcsamples import MCSamples
 from getdist.chains import chainFiles
 from tqdm import tqdm
 import matplotlib
-import emcee
 
 matplotlib.use('Agg')
 
@@ -59,8 +58,8 @@ class MCMCSampler(Sampler):
     def mcmc_sample(
             self,
             mcmc_steps=20,
-            stepsize=1.0,
-            dynamic_stepsize=False,
+            step_size=1.0,
+            dynamic_step_size=False,
             num_chains=1,
             init_x=None,
             loglstar=None,
@@ -74,6 +73,7 @@ class MCMCSampler(Sampler):
         self.trainer.netG.eval()
 
         samples = []
+        latent_samples = []
         derived_samples = []
         likes = []
 
@@ -82,14 +82,13 @@ class MCMCSampler(Sampler):
             z, _ = self.trainer.netG(torch.from_numpy(init_x).float().to(self.trainer.device))
             z = z.detach()
             # Add the backward version of x rather than init_x due to numerical precision
-            x, _ = self.trainer.netG(z, mode='inverse')
-            x = x.detach().cpu().numpy()
+            x = self.trainer.get_samples(z)
             logl, derived = self.loglike(self.transform(x))
         else:
             for i in range(max_start_tries):
                 z = torch.randn(num_chains, self.trainer.z_dim, device=self.trainer.device)
-                x, _ = self.trainer.netG(z, mode='inverse')
-                x = x.detach().cpu().numpy()
+                z = z.detach()
+                x = self.trainer.get_samples(z)
                 logl, derived = self.loglike(self.transform(x))
                 if np.all(logl > -1e30):
                     break
@@ -97,11 +96,12 @@ class MCMCSampler(Sampler):
                     raise Exception('Could not find starting value')
 
         samples.append(x)
+        latent_samples.append(z.cpu().numpy())
         derived_samples.append(derived)
         likes.append(logl)
 
         iters = tqdm(range(mcmc_steps)) if show_progress else range(mcmc_steps)
-        scale = stepsize
+        scale = step_size
         accept = 0
         reject = 0
         ncall = 0
@@ -170,7 +170,7 @@ class MCMCSampler(Sampler):
             else:
                 reject += 1
 
-            if dynamic_stepsize:
+            if dynamic_step_size:
                 if accept > reject:
                     scale *= np.exp(1. / accept)
                 if accept < reject:
@@ -183,9 +183,8 @@ class MCMCSampler(Sampler):
             m = mask
             logl = logl_prime * m.cpu().numpy() + logl * (1 - m.cpu().numpy())
 
-            x, _ = self.trainer.netG(z, mode='inverse')
-            x = x.detach().cpu().numpy()
-            samples.append(x)
+            samples.append(self.trainer.get_samples(z))
+            latent_samples.append(z.cpu().numpy())
             derived_samples.append(derived)
             likes.append(logl)
 
@@ -199,6 +198,7 @@ class MCMCSampler(Sampler):
 
         # Transpose samples so shape is (chain_num, iteration, dim)
         samples = np.transpose(np.array(samples), axes=[1, 0, 2])
+        latent_samples = np.transpose(np.array(latent_samples), axes=[1, 0, 2])
         derived_samples = np.transpose(np.array(derived_samples), axes=[1, 0, 2])
         likes = np.transpose(np.array(likes), axes=[1, 0])
 
@@ -206,7 +206,7 @@ class MCMCSampler(Sampler):
             for ib in range(num_chains):
                 files[ib].close()
 
-        return samples, derived_samples, likes, scale, ncall
+        return samples, latent_samples, derived_samples, likes, scale, ncall
 
     def _chain_stats(self, samples, mean=None, std=None):
         acceptance = acceptance_rate(samples)
@@ -249,6 +249,7 @@ class MCMCSampler(Sampler):
                         f.write("\n")
 
     def _init_samples(self, mcmc_steps=100, nwalkers=20, burn_in_steps=10, thin=1):
+        import emcee
         self.logger.info('Getting initial samples with emcee')
         p0 = np.random.rand(nwalkers, self.x_dim)
         sampler = emcee.EnsembleSampler(nwalkers, self.x_dim, self.loglike)
@@ -280,18 +281,19 @@ class MCMCSampler(Sampler):
             bootstrap_fileroot='',
             bootstrap_match='',
             bootstrap_num_chains=5,
-            stepsize=0,
+            step_size=0,
             single_thin=1,
             ignore_rows=0.3,
             stats_interval=200,
             output_interval=100,
-            init_samples=None):
+            init_samples=None,
+            jitter=-1.0):
 
-        if stepsize == 0.0:
-            stepsize = 1 / self.x_dim ** 0.5
+        if step_size == 0.0:
+            step_size = 1 / self.x_dim ** 0.5
 
         if self.log:
-            self.logger.info('Alpha [%5.4f]' % (stepsize))
+            self.logger.info('Alpha [%5.4f]' % (step_size))
 
         ncall = 0
 
@@ -308,9 +310,9 @@ class MCMCSampler(Sampler):
                     samples = self._init_samples()
 
             else:
-                samples, derived_samples, likes, scale, nc = self.mcmc_sample(
+                samples, latent_samples, derived_samples, likes, scale, nc = self.mcmc_sample(
                     mcmc_steps=bootstrap_mcmc_steps, num_chains=bootstrap_num_chains,
-                    stepsize=stepsize, dynamic_stepsize=False, stats_interval=stats_interval)
+                    step_size=step_size, dynamic_step_size=False, stats_interval=stats_interval)
                 samples = self.transform(samples)
                 mc = MCSamples(samples=[samples[i, :, :].squeeze() for i in range(bootstrap_num_chains)],
                                ignore_rows=ignore_rows)
@@ -322,17 +324,18 @@ class MCMCSampler(Sampler):
             std = np.std(samples, axis=0)
             # Normalise samples
             samples = (samples - mean) / std
-            self.trainer.train(samples, max_iters=train_iters, noise=-1)
+            self.trainer.train(samples, max_iters=train_iters, jitter=jitter)
             self.transform = lambda x: x * std + mean
 
-        samples, derived_samples, likes, scale, nc = self.mcmc_sample(
-            mcmc_steps=mcmc_steps,  num_chains=mcmc_num_chains, stepsize=stepsize, dynamic_stepsize=False,
+        samples, latent_samples, derived_samples, likes, scale, nc = self.mcmc_sample(
+            mcmc_steps=mcmc_steps,  num_chains=mcmc_num_chains, step_size=step_size, dynamic_step_size=False,
             out_chain=os.path.join(self.logs['chains'], 'chain'), stats_interval=stats_interval,
             output_interval=output_interval)
         samples = self.transform(samples)
         ncall += nc
 
         self.samples = samples
+        self.latent_samples = latent_samples
         self.loglikes = -likes
 
         print("ncall: {:d}\n".format(ncall))
