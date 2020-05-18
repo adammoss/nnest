@@ -64,7 +64,7 @@ class NestedSampler(MCMCSampler):
             method=None,
             mcmc_steps=0,
             mcmc_burn_in=0,
-            mcmc_batch_size=10,
+            mcmc_num_chains=10,
             max_iters=1000000,
             update_interval=None,
             log_interval=None,
@@ -171,7 +171,7 @@ class NestedSampler(MCMCSampler):
             ncall = self.num_live_points  # number of calls we already made
 
         first_time = True
-        nb = self.mpi_size * mcmc_batch_size
+        nb = self.mpi_size * mcmc_num_chains
         rejection_sample = volume_switch < 1
         ncs = []
 
@@ -278,11 +278,11 @@ class NestedSampler(MCMCSampler):
 
                 accept = False
                 while not accept:
-                    if nb == self.mpi_size * mcmc_batch_size:
+                    if nb == self.mpi_size * mcmc_num_chains:
                         # Get a new batch of trial points
                         nb = 0
                         idx = np.random.randint(
-                            low=0, high=self.num_live_points, size=mcmc_batch_size)
+                            low=0, high=self.num_live_points, size=mcmc_num_chains)
                         init_x = active_u[idx, :]
                         samples, derived_samples, likes, scale, nc = self.mcmc_sample(
                             init_x=init_x, loglstar=loglstar, mcmc_steps=mcmc_steps + mcmc_burn_in,
@@ -299,7 +299,7 @@ class NestedSampler(MCMCSampler):
                             ncall += sum(recv_nc)
                         else:
                             ncall += nc
-                    for ib in range(nb, self.mpi_size * mcmc_batch_size):
+                    for ib in range(nb, self.mpi_size * mcmc_num_chains):
                         nb += 1
                         if np.all(samples[ib, 0, :] != samples[ib, -1, :]) and likes[ib, -1] > loglstar:
                             active_u[worst] = samples[ib, -1, :]

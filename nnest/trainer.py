@@ -10,6 +10,7 @@ from __future__ import division
 import os
 import time
 import copy
+import logging
 
 import torch
 from torch.utils.data import DataLoader
@@ -90,7 +91,7 @@ class Trainer(object):
         self.optimizer = torch.optim.Adam(
             self.netG.parameters(), lr=0.0001, weight_decay=1e-6)
 
-        self.logger = create_logger(__name__)
+        self.logger = create_logger(__name__, level=logging.INFO)
         self.log = log
 
         if self.path is not None:
@@ -249,20 +250,20 @@ class Trainer(object):
 
         return val_loss / len(loader.dataset)
 
-    def _train_plot(self, model, dataset, plot_grid=True):
+    def _train_plot(self, model, samples, plot_grid=True):
 
         model.eval()
         with torch.no_grad():
-            x_synth = model.sample(dataset.size).detach().cpu().numpy()
-            z, _ = model(torch.from_numpy(dataset).float().to(self.device))
+            x_synth = model.sample(samples.size).detach().cpu().numpy()
+            z, _ = model(torch.from_numpy(samples).float().to(self.device))
             z = z.detach().cpu().numpy()
             if plot_grid and self.x_dim == 2:
                 grid = []
-                for x in np.linspace(np.min(dataset[:, 0]), np.max(dataset[:, 0]), 10):
-                    for y in np.linspace(np.min(dataset[:, 1]), np.max(dataset[:, 1]), 5000):
+                for x in np.linspace(np.min(samples[:, 0]), np.max(samples[:, 0]), 10):
+                    for y in np.linspace(np.min(samples[:, 1]), np.max(samples[:, 1]), 5000):
                         grid.append([x, y])
-                for y in np.linspace(np.min(dataset[:, 1]), np.max(dataset[:, 1]), 10):
-                    for x in np.linspace(np.min(dataset[:, 0]), np.max(dataset[:, 0]), 5000):
+                for y in np.linspace(np.min(samples[:, 1]), np.max(samples[:, 1]), 10):
+                    for x in np.linspace(np.min(samples[:, 0]), np.max(samples[:, 0]), 5000):
                         grid.append([x, y])
                 grid = np.array(grid)
                 z_grid, _ = model(torch.from_numpy(grid).float().to(self.device))
@@ -270,15 +271,15 @@ class Trainer(object):
 
         if self.writer is not None:
             fig, ax = plt.subplots(2, figsize=(5, 10))
-            ax[0].scatter(dataset[:, 0], dataset[:, 1], c=dataset[:, 0], s=4)
-            ax[1].scatter(z[:, 0], z[:, 1], c=dataset[:, 0], s=4)
+            ax[0].scatter(samples[:, 0], samples[:, 1], c=samples[:, 0], s=4)
+            ax[1].scatter(z[:, 0], z[:, 1], c=samples[:, 0], s=4)
             self.writer.add_figure('latent', fig, self.total_iters)
 
         if self.path:
             fig, ax = plt.subplots(1, 3, figsize=(10, 4))
             if plot_grid and self.x_dim == 2:
                 ax[0].scatter(grid[:, 0], grid[:, 1], c=grid[:, 0], marker='.', s=1, linewidths=0)
-            ax[0].scatter(dataset[:, 0], dataset[:, 1], s=4)
+            ax[0].scatter(samples[:, 0], samples[:, 1], s=4)
             ax[0].set_title('Real data')
             if plot_grid and self.x_dim == 2:
                 ax[1].scatter(z_grid[:, 0], z_grid[:, 1], c=grid[:, 0], marker='.', s=1, linewidths=0)

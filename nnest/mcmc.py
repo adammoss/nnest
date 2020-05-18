@@ -61,7 +61,7 @@ class MCMCSampler(Sampler):
             mcmc_steps=20,
             stepsize=1.0,
             dynamic_stepsize=False,
-            batch_size=1,
+            num_chains=1,
             init_x=None,
             loglstar=None,
             show_progress=False,
@@ -78,7 +78,7 @@ class MCMCSampler(Sampler):
         likes = []
 
         if init_x is not None:
-            batch_size = init_x.shape[0]
+            num_chains = init_x.shape[0]
             z, _ = self.trainer.netG(torch.from_numpy(init_x).float().to(self.trainer.device))
             z = z.detach()
             # Add the backward version of x rather than init_x due to numerical precision
@@ -87,7 +87,7 @@ class MCMCSampler(Sampler):
             logl, derived = self.loglike(self.transform(x))
         else:
             for i in range(max_start_tries):
-                z = torch.randn(batch_size, self.trainer.z_dim, device=self.trainer.device)
+                z = torch.randn(num_chains, self.trainer.z_dim, device=self.trainer.device)
                 x, _ = self.trainer.netG(z, mode='inverse')
                 x = x.detach().cpu().numpy()
                 logl, derived = self.loglike(self.transform(x))
@@ -107,13 +107,14 @@ class MCMCSampler(Sampler):
         ncall = 0
 
         if out_chain is not None:
-            if batch_size == 1:
+            if num_chains == 1:
                 files = [open(out_chain + '.txt', 'w')]
             else:
-                files = [open(out_chain + '_%s.txt' % (ib + 1), 'w') for ib in range(batch_size)]
+                files = [open(out_chain + '_%s.txt' % (ib + 1), 'w') for ib in range(num_chains)]
 
         for it in iters:
 
+            # Propose a move in latent space
             dz = torch.randn_like(z) * scale
             if self.num_slow > 0 and np.random.uniform() < self.oversample_rate:
                 fast = True
@@ -139,7 +140,7 @@ class MCMCSampler(Sampler):
             rnd_u = torch.rand(log_ratio_1.shape, device=self.trainer.device)
             ratio = log_ratio_1.exp().clamp(max=1)
             mask = (rnd_u < ratio).int()
-            logl_prime = np.full(batch_size, logl)
+            logl_prime = np.full(num_chains, logl)
             derived_prime = np.copy(derived)
 
             # Only evaluate likelihood if prior and volume is accepted
@@ -164,7 +165,7 @@ class MCMCSampler(Sampler):
                             else:
                                 mask[idx] = 0
 
-            if 2 * torch.sum(mask).cpu().numpy() > batch_size:
+            if 2 * torch.sum(mask).cpu().numpy() > num_chains:
                 accept += 1
             else:
                 reject += 1
@@ -202,7 +203,7 @@ class MCMCSampler(Sampler):
         likes = np.transpose(np.array(likes), axes=[1, 0])
 
         if out_chain is not None:
-            for ib in range(batch_size):
+            for ib in range(num_chains):
                 files[ib].close()
 
         return samples, derived_samples, likes, scale, ncall
@@ -247,18 +248,17 @@ class MCMCSampler(Sampler):
                             f.write(" ".join(["%.5E" % v for v in derived_samples[ib, i, :]]))
                         f.write("\n")
 
-    def _init_samples(self, mcmc_steps=100, nwalkers=10, burn_in_steps=10):
+    def _init_samples(self, mcmc_steps=100, nwalkers=20, burn_in_steps=10, thin=1):
         self.logger.info('Getting initial samples with emcee')
         p0 = np.random.rand(nwalkers, self.x_dim)
         sampler = emcee.EnsembleSampler(nwalkers, self.x_dim, self.loglike)
         state = sampler.run_mcmc(p0, burn_in_steps)
         sampler.reset()
         sampler.run_mcmc(state, mcmc_steps)
-        self.logger.info('Mean acceptance fraction: [%5.3f]'  % np.mean(sampler.acceptance_fraction))
-        mc = MCSamples(samples=sampler.get_chain())
-        return mc
+        self.logger.info('Mean acceptance fraction: [%5.3f]' % np.mean(sampler.acceptance_fraction))
+        return sampler.get_chain(flat=True, thin=thin)
 
-    def _read_samples(self, fileroot, match='', ignore_rows=0.3):
+    def _read_samples(self, fileroot, match='', ignore_rows=0.3, thin=1):
         names = ['p%i' % i for i in range(int(self.num_params))]
         labels = [r'x_%i' % i for i in range(int(self.num_params))]
         if match:
@@ -267,22 +267,25 @@ class MCMCSampler(Sampler):
             files = chainFiles(fileroot)
         mc = MCSamples(fileroot, names=names, labels=labels, ignore_rows=ignore_rows)
         mc.readChains(files)
-        return mc
+        samples = mc.makeSingleSamples(single_thin=thin)
+        return samples
 
     def run(
             self,
             train_iters=200,
             mcmc_steps=5000,
-            bootstrap_iters=1,
-            bootstrap_mcmc_steps=5000,
+            mcmc_num_chains=5,
+            bootstrap_iters=2,
+            bootstrap_mcmc_steps=1000,
             bootstrap_fileroot='',
             bootstrap_match='',
-            bootstrap_batch_size=5,
+            bootstrap_num_chains=5,
             stepsize=0,
             single_thin=1,
             ignore_rows=0.3,
-            stats_interval=100,
-            output_interval=100):
+            stats_interval=200,
+            output_interval=100,
+            init_samples=None):
 
         if stepsize == 0.0:
             stepsize = 1 / self.x_dim ** 0.5
@@ -290,21 +293,30 @@ class MCMCSampler(Sampler):
         if self.log:
             self.logger.info('Alpha [%5.4f]' % (stepsize))
 
-        for t in range(bootstrap_iters):
+        ncall = 0
 
-            if t == 0:
-                if bootstrap_fileroot:
-                    mc = self._read_samples(bootstrap_fileroot, match=bootstrap_match, ignore_rows=ignore_rows)
+        for it in range(bootstrap_iters):
+
+            self.logger.info('Bootstrap step [%d]' % (it+1))
+
+            if it == 0:
+                if init_samples is not None:
+                    samples = init_samples
+                elif bootstrap_fileroot:
+                    samples = self._read_mc_samples(bootstrap_fileroot, match=bootstrap_match, ignore_rows=ignore_rows)
                 else:
-                    mc = self._init_samples()
+                    samples = self._init_samples()
+
             else:
                 samples, derived_samples, likes, scale, nc = self.mcmc_sample(
-                    mcmc_steps=bootstrap_mcmc_steps, stepsize=stepsize, dynamic=False, show_progress=True)
+                    mcmc_steps=bootstrap_mcmc_steps, num_chains=bootstrap_num_chains,
+                    stepsize=stepsize, dynamic_stepsize=False, stats_interval=stats_interval)
                 samples = self.transform(samples)
-                self._chain_stats(samples)
-                mc = MCSamples(samples=samples, ignore_rows=ignore_rows)
+                mc = MCSamples(samples=[samples[i, :, :].squeeze() for i in range(bootstrap_num_chains)],
+                               ignore_rows=ignore_rows)
+                samples = mc.makeSingleSamples(single_thin=single_thin)
+                ncall += nc
 
-            samples = mc.makeSingleSamples(single_thin=single_thin)
             samples = samples[:, :self.x_dim]
             mean = np.mean(samples, axis=0)
             std = np.std(samples, axis=0)
@@ -314,12 +326,13 @@ class MCMCSampler(Sampler):
             self.transform = lambda x: x * std + mean
 
         samples, derived_samples, likes, scale, nc = self.mcmc_sample(
-            mcmc_steps=mcmc_steps, stepsize=stepsize, dynamic_stepsize=False, show_progress=True,
+            mcmc_steps=mcmc_steps,  num_chains=mcmc_num_chains, stepsize=stepsize, dynamic_stepsize=False,
             out_chain=os.path.join(self.logs['chains'], 'chain'), stats_interval=stats_interval,
             output_interval=output_interval)
         samples = self.transform(samples)
-        self._chain_stats(samples)
+        ncall += nc
 
         self.samples = samples
         self.loglikes = -likes
 
+        print("ncall: {:d}\n".format(ncall))

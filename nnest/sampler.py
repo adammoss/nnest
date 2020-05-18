@@ -9,7 +9,7 @@ from __future__ import division
 
 import os
 import json
-
+import logging
 import numpy as np
 
 from nnest.trainer import Trainer
@@ -107,7 +107,7 @@ class Sampler(object):
 
         self.resume = resume
 
-        self.logger = create_logger(__name__)
+        self.logger = create_logger(__name__, level=logging.INFO)
 
         if trainer is None:
             self.trainer = Trainer(
