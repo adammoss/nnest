@@ -98,6 +98,7 @@ class Trainer(object):
             self.logger.info(self.netG)
             self.writer = SummaryWriter(self.path)
 
+        self.logger.info('Number of network params: [%s]' % sum(p.numel() for p in self.netG.parameters()))
         self.logger.info('Device [%s]' % self.device)
 
     def train(

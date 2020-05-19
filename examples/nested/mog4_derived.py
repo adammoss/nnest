@@ -82,7 +82,7 @@ def main(args):
                             hidden_dim=args.hidden_dim, num_layers=args.num_layers, num_blocks=args.num_blocks,
                             num_slow=args.num_slow, num_derived=args.num_derived,
                             use_gpu=args.use_gpu, base_dist=base_dist, scale=args.scale)
-    sampler.run(train_iters=args.train_iters, mcmc_steps=args.mcmc_steps, volume_switch=args.switch, noise=args.noise)
+    sampler.run(train_iters=args.train_iters, mcmc_steps=args.mcmc_steps, volume_switch=args.switch, jitter=args.jitter)
 
 
 if __name__ == '__main__':
@@ -102,7 +102,7 @@ if __name__ == '__main__':
     parser.add_argument('-use_gpu', action='store_true')
     parser.add_argument('--flow', type=str, default='nvp')
     parser.add_argument('--num_blocks', type=int, default=5)
-    parser.add_argument('--noise', type=float, default=-1)
+    parser.add_argument('--jitter', type=float, default=-1)
     parser.add_argument("--test_samples", type=int, default=0)
     parser.add_argument('--num_slow', type=int, default=0)
     parser.add_argument('--num_derived', type=int, default=1)
