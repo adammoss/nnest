@@ -23,7 +23,7 @@ import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 
-from nnest.networks import SingleSpeed, FastSlow, BatchNormFlow
+from nnest.networks import SingleSpeed, FastSlow, SingleSpeedSpline
 from nnest.utils.logger import create_logger
 
 
@@ -66,6 +66,8 @@ class Trainer(object):
             else:
                 self.netG = SingleSpeed(x_dim, hidden_dim, num_blocks, num_layers, device=self.device,
                                         scale=scale, base_dist=base_dist)
+        elif flow.lower() == 'spline':
+            self.netG = SingleSpeedSpline(x_dim, device=self.device, base_dist=base_dist)
         else:
             raise NotImplementedError
 
@@ -234,16 +236,8 @@ class Trainer(object):
             loss.backward()
             self.optimizer.step()
 
-        for module in self.netG.modules():
-            if isinstance(module, BatchNormFlow):
-                module.momentum = 0
-
         with torch.no_grad():
             self.netG(loader.dataset.tensors[0].to(data.device))
-
-        for module in self.netG.modules():
-            if isinstance(module, BatchNormFlow):
-                module.momentum = 1
 
         return train_loss / len(loader.dataset)
 
