@@ -314,6 +314,5 @@ class FastSlow(SingleSpeed):
         fast, logdets_fast = self.net_fast(inputs[:, self.num_slow:self.num_slow + self.num_fast])
         inputs = torch.cat((slow, fast), dim=1)
         u, log_jacob = self.net(inputs)
-        log_probs = (-0.5 * u.pow(2) - 0.5 * math.log(2 * math.pi)).sum(
-            -1, keepdim=True)
+        log_probs = self.base_dist.log_prob(u).unsqueeze(1)
         return (log_probs + log_jacob + logdets_slow + logdets_fast).sum(-1, keepdim=True)

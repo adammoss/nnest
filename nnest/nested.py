@@ -13,13 +13,13 @@ import os
 import csv
 import json
 import glob
-
+import torch
 import numpy as np
 
-from nnest.sampler import Sampler
+from nnest.mcmc import MCMCSampler
 
 
-class NestedSampler(Sampler):
+class NestedSampler(MCMCSampler):
 
     def __init__(self,
                  x_dim,
@@ -41,14 +41,14 @@ class NestedSampler(Sampler):
                  num_live_points=1000
                  ):
 
-        self.num_live_points = num_live_points
-        self.sampler = 'nested'
-
         super(NestedSampler, self).__init__(x_dim, loglike, transform=transform, append_run_num=append_run_num,
                                             run_num=run_num, hidden_dim=hidden_dim, num_slow=num_slow,
                                             num_derived=num_derived, batch_size=batch_size, flow=flow,
                                             num_blocks=num_blocks, num_layers=num_layers, log_dir=log_dir,
                                             use_gpu=use_gpu, base_dist=base_dist, scale=scale)
+
+        self.num_live_points = num_live_points
+        self.sampler = 'nested'
 
         if self.log:
             self.logger.info('Num live points [%d]' % self.num_live_points)
@@ -64,15 +64,15 @@ class NestedSampler(Sampler):
             method=None,
             mcmc_steps=0,
             mcmc_burn_in=0,
-            mcmc_batch_size=10,
+            mcmc_num_chains=10,
             max_iters=1000000,
             update_interval=None,
             log_interval=None,
             dlogz=0.5,
             train_iters=500,
             volume_switch=-1.0,
-            alpha=0.0,
-            noise=-1.0,
+            step_size=0.0,
+            jitter=-1.0,
             num_test_mcmc_samples=0,
             test_mcmc_steps=1000,
             test_mcmc_burn_in=0):
@@ -97,12 +97,12 @@ class NestedSampler(Sampler):
         if mcmc_steps <= 0:
             mcmc_steps = 5 * self.x_dim
 
-        if alpha == 0.0:
-            alpha = 2 / self.x_dim ** 0.5
+        if step_size == 0.0:
+            step_size = 2 / self.x_dim ** 0.5
 
         if self.log:
             self.logger.info('MCMC steps [%d]' % mcmc_steps)
-            self.logger.info('Initial scale [%5.4f]' % alpha)
+            self.logger.info('Initial scale [%5.4f]' % step_size)
             self.logger.info('Volume switch [%5.4f]' % volume_switch)
 
         it = 0
@@ -171,7 +171,7 @@ class NestedSampler(Sampler):
             ncall = self.num_live_points  # number of calls we already made
 
         first_time = True
-        nb = self.mpi_size * mcmc_batch_size
+        nb = self.mpi_size * mcmc_num_chains
         rejection_sample = volume_switch < 1
         ncs = []
 
@@ -202,15 +202,15 @@ class NestedSampler(Sampler):
 
             # Train flow
             if first_time or it % update_interval == 0:
-                self.trainer.train(active_u, max_iters=train_iters, noise=noise)
+                self.trainer.train(active_u, max_iters=train_iters, jitter=jitter)
+
                 if num_test_mcmc_samples > 0:
                     # Test multiple chains from worst point to check mixing
                     init_x = np.concatenate(
                         [active_u[worst:worst + 1, :] for i in range(num_test_mcmc_samples)])
-                    test_samples, _, _, _, scale, _ = self.trainer.mcmc_sample(
-                        self.loglike, init_x=init_x, loglstar=loglstar,
-                        transform=self.transform, mcmc_steps=test_mcmc_steps + test_mcmc_burn_in,
-                        max_prior=1, alpha=alpha)
+                    test_samples, _, _, _, _, scale, _ = self.mcmc_sample(
+                        init_x=init_x, loglstar=loglstar, mcmc_steps=test_mcmc_steps + test_mcmc_burn_in,
+                        max_prior=1, step_size=step_size, dynamic_step_size=True)
                     np.save(os.path.join(self.logs['chains'], 'test_samples.npy'), test_samples)
                     self._chain_stats(test_samples, mean=np.mean(active_u, axis=0), std=np.std(active_u, axis=0))
                 first_time = False
@@ -235,8 +235,7 @@ class NestedSampler(Sampler):
                 else:
 
                     # Rejection sampling using flow
-                    u, logl, nc = self.trainer.rejection_sample(self.loglike, loglstar, transform=self.transform,
-                                                                init_x=active_u, max_prior=1)
+                    u, logl, nc = self.rejection_sample(self.loglike, loglstar, init_x=active_u, max_prior=1)
 
                 ncs.append(nc)
                 mean_calls = np.mean(ncs[-10:])
@@ -279,16 +278,15 @@ class NestedSampler(Sampler):
 
                 accept = False
                 while not accept:
-                    if nb == self.mpi_size * mcmc_batch_size:
+                    if nb == self.mpi_size * mcmc_num_chains:
                         # Get a new batch of trial points
                         nb = 0
                         idx = np.random.randint(
-                            low=0, high=self.num_live_points, size=mcmc_batch_size)
+                            low=0, high=self.num_live_points, size=mcmc_num_chains)
                         init_x = active_u[idx, :]
-                        samples, derived_samples, likes, scale, nc = self.trainer.mcmc_sample(
-                            loglike=self.loglike, init_x=init_x, loglstar=loglstar,
-                            transform=self.transform, mcmc_steps=mcmc_steps + mcmc_burn_in,
-                            max_prior=1, alpha=alpha)
+                        samples, latent_samples, derived_samples, likes, scale, nc = self.mcmc_sample(
+                            init_x=init_x, loglstar=loglstar, mcmc_steps=mcmc_steps + mcmc_burn_in,
+                            max_prior=1, step_size=step_size, dynamic_step_size=True)
                         if self.use_mpi:
                             recv_samples = self.comm.gather(samples, root=0)
                             recv_likes = self.comm.gather(likes, root=0)
@@ -301,7 +299,7 @@ class NestedSampler(Sampler):
                             ncall += sum(recv_nc)
                         else:
                             ncall += nc
-                    for ib in range(nb, self.mpi_size * mcmc_batch_size):
+                    for ib in range(nb, self.mpi_size * mcmc_num_chains):
                         nb += 1
                         if np.all(samples[ib, 0, :] != samples[ib, -1, :]) and likes[ib, -1] > loglstar:
                             active_u[worst] = samples[ib, -1, :]
@@ -333,7 +331,7 @@ class NestedSampler(Sampler):
 
             self.samples = np.array(saved_v)
             self.weights = np.exp(np.array(saved_logwt) - logz)
-            self.likes = np.array(saved_logl)
+            self.loglikes = -np.array(saved_logl)
 
             if it % log_interval == 0 and self.log:
                 np.save(os.path.join(self.logs['checkpoint'], 'active_u_%s.npy' % it), active_u)
@@ -343,9 +341,9 @@ class NestedSampler(Sampler):
                 np.save(os.path.join(self.logs['checkpoint'], 'saved_logl.npy'), saved_logl)
                 np.save(os.path.join(self.logs['checkpoint'], 'saved_logwt.npy'), saved_logwt)
                 with open(os.path.join(self.logs['checkpoint'], 'checkpoint_%s.txt' % it), 'w') as f:
-                    json.dump({'logz': logz, 'h': h,  'logvol': logvol, 'ncall': ncall,
+                    json.dump({'logz': logz, 'h': h, 'logvol': logvol, 'ncall': ncall,
                                'fraction_remain': fraction_remain, 'method': method}, f)
-                self._save_samples(self.samples, self.weights, self.likes)
+                self._save_samples(self.samples, self.loglikes, weights=self.weights)
 
             # Stopping criterion
             if fraction_remain < dlogz:
@@ -362,13 +360,72 @@ class NestedSampler(Sampler):
             saved_logl.append(active_logl[i])
 
         self.logz = logz
+        self.samples = np.array(saved_v)
+        self.weights = np.exp(np.array(saved_logwt) - logz)
+        self.loglikes = -np.array(saved_logl)
 
         if self.log:
             with open(os.path.join(self.logs['results'], 'final.csv'), 'w') as f:
                 writer = csv.writer(f)
                 writer.writerow(['niter', 'ncall', 'logz', 'logzerr', 'h'])
                 writer.writerow([it + 1, ncall, logz, np.sqrt(h / self.num_live_points), h])
-            self._save_samples(self.samples, self.weights, self.likes)
+            self._save_samples(self.samples, self.loglikes, weights=self.weights)
 
         print("niter: {:d}\n ncall: {:d}\n nsamples: {:d}\n logz: {:6.3f} +/- {:6.3f}\n h: {:6.3f}"
               .format(it + 1, ncall, len(np.array(saved_v)), logz, np.sqrt(h / self.num_live_points), h))
+
+    def rejection_sample(
+            self,
+            loglstar,
+            init_x=None,
+            max_prior=None,
+            enlargement_factor=1.3,
+            constant_efficiency_factor=None):
+
+        self.trainer.netG.eval()
+
+        if init_x is not None:
+            z, log_det_J = self.trainer.netG(torch.from_numpy(init_x).float().to(self.trainer.device))
+            # We want max det dx/dz to set envelope for rejection sampling
+            m = torch.max(-log_det_J)
+            z = z.detach().cpu().numpy()
+            r = np.max(np.linalg.norm(z, axis=1))
+        else:
+            r = 1
+
+        if constant_efficiency_factor is not None:
+            enlargement_factor = (1 / constant_efficiency_factor) ** (1 / self.x_dim)
+
+        nc = 0
+        while True:
+            if hasattr(self.trainer.netG.base_dist, 'usample'):
+                z = self.trainer.netG.base_dist.usample(sample_shape=(1,)) * enlargement_factor
+            else:
+                z = np.random.randn(self.x_dim)
+                z = enlargement_factor * r * z * np.random.rand() ** (1. / self.x_dim) / np.sqrt(np.sum(z ** 2))
+                z = np.expand_dims(z, 0)
+            x, log_det_J = self.trainer.netG(torch.from_numpy(z).float().to(self.trainer.device), mode='inverse')
+            delta_log_det_J = (log_det_J - m).detach()
+            log_ratio_1 = delta_log_det_J.squeeze(dim=1)
+            x = x.detach().cpu().numpy()
+
+            # Check not out of prior range
+            if np.any(np.abs(x) > max_prior):
+                continue
+
+            # Check volume constraint
+            rnd_u = torch.rand(log_ratio_1.shape, device=self.trainer.device)
+            ratio = (log_ratio_1).exp().clamp(max=1)
+            if rnd_u > ratio:
+                continue
+
+            logl = self.loglike(self.transform(x))
+            idx = np.where(np.isfinite(logl) & (logl < loglstar))[0]
+            log_ratio_1[idx] = -np.inf
+            ratio = (log_ratio_1).exp().clamp(max=1)
+
+            nc += 1
+            if rnd_u < ratio:
+                break
+
+        return x, logl, nc
