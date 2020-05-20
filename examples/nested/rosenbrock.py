@@ -5,7 +5,8 @@ import argparse
 import numpy as np
 import torch
 
-sys.path.append(os.getcwd())
+path = os.path.realpath(os.path.join(os.getcwd(), '../..'))
+sys.path.insert(0, path)
 
 
 def main(args):
@@ -27,7 +28,7 @@ def main(args):
     sampler = NestedSampler(args.x_dim, loglike, transform=transform, log_dir=args.log_dir, num_live_points=args.num_live_points,
                             hidden_dim=args.hidden_dim, num_layers=args.num_layers, num_blocks=args.num_blocks, num_slow=args.num_slow,
                             use_gpu=args.use_gpu, base_dist=base_dist, scale=args.scale)
-    sampler.run(train_iters=args.train_iters, mcmc_steps=args.mcmc_steps, volume_switch=args.switch, noise=args.noise,
+    sampler.run(train_iters=args.train_iters, mcmc_steps=args.mcmc_steps, volume_switch=args.switch, jitter=args.jitter,
                 num_test_mcmc_samples=args.test_samples, test_mcmc_steps=args.test_mcmc_steps)
 
 
@@ -46,14 +47,13 @@ if __name__ == '__main__':
     parser.add_argument('-use_gpu', action='store_true')
     parser.add_argument('--flow', type=str, default='nvp')
     parser.add_argument('--num_blocks', type=int, default=5)
-    parser.add_argument('--noise', type=float, default=-1)
+    parser.add_argument('--jitter', type=float, default=-1)
     parser.add_argument("--test_samples", type=int, default=0)
     parser.add_argument("--test_mcmc_steps", type=int, default=1000)
-    parser.add_argument('--run_num', type=str, default='')
     parser.add_argument('--num_slow', type=int, default=0)
     parser.add_argument('--log_dir', type=str, default='logs/rosenbrock')
     parser.add_argument('--base_dist', type=str, default='')
-    parser.add_argument('--scale', type=str, default='constant')
+    parser.add_argument('--scale', type=str, default='')
     parser.add_argument('--beta', type=float, default=8.0)
 
     args = parser.parse_args()

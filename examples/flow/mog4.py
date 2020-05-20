@@ -3,10 +3,10 @@ import sys
 import argparse
 
 import numpy as np
-from scipy.stats import multivariate_normal
 import torch
 
-sys.path.append(os.getcwd())
+path = os.path.realpath(os.path.join(os.getcwd(), '../..'))
+sys.path.insert(0, path)
 
 
 def log_gaussian_pdf(theta, sigma=1, mu=0, ndim=None):
@@ -108,14 +108,12 @@ if __name__ == '__main__':
     parser.add_argument('-use_gpu', action='store_true')
     parser.add_argument('--flow', type=str, default='nvp')
     parser.add_argument('--num_blocks', type=int, default=5)
-    parser.add_argument('--noise', type=float, default=-1)
-    parser.add_argument('--run_num', type=str, default='')
     parser.add_argument('--num_slow', type=int, default=0)
     parser.add_argument('--corr', type=float, default=0.99)
     parser.add_argument('--log_dir', type=str, default='logs/flow/gauss')
     parser.add_argument('--beta', type=float, default=8.0)
     parser.add_argument('--base_dist', type=str, default='')
-    parser.add_argument('--scale', type=str, default='constant')
+    parser.add_argument('--scale', type=str, default='')
     parser.add_argument('--fraction', type=float, default=0.02)
 
     args = parser.parse_args()

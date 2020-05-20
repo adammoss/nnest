@@ -1,8 +1,19 @@
 Changelog
 =========
 
-0.1.4 (xx.xx.xxxx) - IN DEVELOPMENT
+0.3.0 (15.5.2020)
+~~~~~~~~~~~~~~~~~~
+
+* Added resume option
+
+0.2.0 (11.12.2019)
+~~~~~~~~~~~~~~~~~~
+
+* Added derived parameters
+* Added rejection sampling
+
+0.1.4 (xx.xx.xxxx)
 ~~~~~~~~~~~~~~~~~~
 
 * Added patience parameter to stop training early when validation loss hasn't improved
-* Fixed dynamical stepsize
+* Fix: Dynamical stepsize

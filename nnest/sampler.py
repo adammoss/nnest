@@ -9,12 +9,11 @@ from __future__ import division
 
 import os
 import json
-
+import logging
 import numpy as np
 
 from nnest.trainer import Trainer
 from nnest.utils.logger import create_logger, make_run_dir
-from nnest.utils.evaluation import acceptance_rate, effective_sample_size, mean_jump_distance
 
 
 class Sampler(object):
@@ -33,23 +32,40 @@ class Sampler(object):
                  num_blocks=5,
                  num_layers=2,
                  log_dir='logs/test',
+                 resume=True,
                  use_gpu=False,
                  base_dist=None,
-                 scale=''
+                 scale='',
+                 trainer=None
                  ):
 
         self.x_dim = x_dim
+        self.num_derived = num_derived
         self.num_params = x_dim + num_derived
 
+        assert x_dim > num_slow
+        self.num_slow = num_slow
+        self.num_fast = x_dim - num_slow
+        
         def safe_loglike(x):
+            if isinstance(x, list):
+                x = np.array(x)
             if len(x.shape) == 1:
                 assert x.shape[0] == self.x_dim
                 x = np.expand_dims(x, 0)
-            logl = loglike(x)
+            res = loglike(x)
+            if isinstance(res, tuple):
+                logl, derived = res
+            else:
+                logl = res
+                # Set derived shape to be (batch size, 0)
+                derived = np.array([[] for _ in x])
             if len(logl.shape) == 0:
                 logl = np.expand_dims(logl, 0)
             logl[np.logical_not(np.isfinite(logl))] = -1e100
-            return logl
+            if len(derived.shape) == 1 or derived.shape[1] != self.num_derived:
+                raise ValueError('Is the number of derived parameters correct and derived has the correct shape?')
+            return logl, derived
 
         self.loglike = safe_loglike
 
@@ -57,11 +73,12 @@ class Sampler(object):
             self.transform = lambda x: x
         else:
             def safe_transform(x):
+                if isinstance(x, list):
+                    x = np.array(x)
                 if len(x.shape) == 1:
                     assert x.shape[0] == self.x_dim
                     x = np.expand_dims(x, 0)
                 return transform(x)
-
             self.transform = safe_transform
 
         self.use_mpi = False
@@ -88,53 +105,33 @@ class Sampler(object):
         else:
             log_dir = None
 
-        self.logger = create_logger(__name__)
+        self.resume = resume
 
-        self.trainer = Trainer(
-            x_dim,
-            hidden_dim,
-            nslow=num_slow,
-            batch_size=batch_size,
-            flow=flow,
-            num_blocks=num_blocks,
-            num_layers=num_layers,
-            log_dir=log_dir,
-            log=self.log,
-            use_gpu=use_gpu,
-            base_dist=base_dist,
-            scale=scale)
+        self.logger = create_logger(__name__, level=logging.INFO)
+
+        if trainer is None:
+            self.trainer = Trainer(
+                x_dim,
+                hidden_dim,
+                num_slow=num_slow,
+                batch_size=batch_size,
+                flow=flow,
+                num_blocks=num_blocks,
+                num_layers=num_layers,
+                log_dir=log_dir,
+                log=self.log,
+                use_gpu=use_gpu,
+                base_dist=base_dist,
+                scale=scale)
+        else:
+            self.trainer = trainer
+
+        if self.log:
+            self.logger.info('Num base params [%d]' % (self.x_dim))
+            self.logger.info('Num derived params [%d]' % (self.num_derived))
+            self.logger.info('Total params [%d]' % (self.num_params))
 
     def _save_params(self, my_dict):
         my_dict = {k: str(v) for k, v in my_dict.items()}
         with open(os.path.join(self.logs['info'], 'params.txt'), 'w') as f:
             json.dump(my_dict, f, indent=4)
-
-    def _chain_stats(self, samples, mean=None, std=None):
-        acceptance = acceptance_rate(samples)
-        if mean is None:
-            mean = np.mean(np.reshape(samples, (-1, samples.shape[2])), axis=0)
-        if std is None:
-            std = np.std(np.reshape(samples, (-1, samples.shape[2])), axis=0)
-        ess = effective_sample_size(samples, mean, std)
-        jump_distance = mean_jump_distance(samples)
-        self.logger.info(
-            'Acceptance [%5.4f] min ESS [%5.4f] max ESS [%5.4f] jump distance [%5.4f]' %
-            (acceptance, np.min(ess), np.max(ess), jump_distance))
-        return acceptance, ess, jump_distance
-
-    def _save_samples(self, samples, weights, logl, min_weight=1e-30, outfile='chain'):
-        if len(samples.shape) == 2:
-            with open(os.path.join(self.logs['chains'], outfile + '.txt'), 'w') as f:
-                for i in range(samples.shape[0]):
-                    f.write("%.5E " % max(weights[i], min_weight))
-                    f.write("%.5E " % -logl[i])
-                    f.write(" ".join(["%.5E" % v for v in samples[i, :]]))
-                    f.write("\n")
-        elif len(samples.shape) == 3:
-            for ib in range(samples.shape[0]):
-                with open(os.path.join(self.logs['chains'], outfile + '_%s.txt' % (ib + 1)), 'w') as f:
-                    for i in range(samples.shape[1]):
-                        f.write("%.5E " % max(weights[ib, i], min_weight))
-                        f.write("%.5E " % -logl[ib, i])
-                        f.write(" ".join(["%.5E" % v for v in samples[ib, i, :]]))
-                        f.write("\n")

@@ -23,7 +23,7 @@ python setup.py install
 
 Nested sampling examples can be found in the `examples/nested` directory, and can be run with e.g. 
 ```
-python examples/nested/rosenbrock.py
+python rosenbrock.py
 ```
 
 ### MCMC Sampling

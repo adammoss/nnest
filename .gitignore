@@ -9,8 +9,9 @@ __pycache__
 .DS_Store
 .idea
 logs
-logs_*
+logs*
 plots
 build
 dist
 *.egg-info
+*.ipynb_checkpoints*
