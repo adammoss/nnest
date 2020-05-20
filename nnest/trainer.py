@@ -68,11 +68,11 @@ class Trainer(object):
                                            scale=scale, prior=base_dist)
         elif flow.lower() == 'spline':
             if num_slow > 0:
-                assert num_slow == 2, 'Spline flow currently limited to 2 slow parameters'
-                assert num_fast == 2, 'Spline flow currently limited to 2 fast parameters'
+                assert num_slow % 2 == 0, 'Spline flow currently limited to even slow parameters'
+                assert num_fast % 2 == 0, 'Spline flow currently limited to even fast parameters'
                 self.netG = FastSlowSpline(num_fast, num_slow, device=self.device, prior=base_dist)
             else:
-                assert x_dim == 2, 'Spline flow currently limited to 2 parameters'
+                assert x_dim % 2 == 0, 'Spline flow currently limited to even parameters'
                 self.netG = SingleSpeedSpline(x_dim, device=self.device, prior=base_dist)
         else:
             raise NotImplementedError
