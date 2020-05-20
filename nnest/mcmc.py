@@ -247,14 +247,20 @@ class MCMCSampler(Sampler):
                             f.write(" ".join(["%.5E" % v for v in derived_samples[ib, i, :]]))
                         f.write("\n")
 
-    def _init_samples(self, mcmc_steps=100, nwalkers=20, burn_in_steps=10, thin=1):
+    def _init_samples(self, mcmc_steps=100, nwalkers=20, thin=1, init_scale=1):
         import emcee
         self.logger.info('Getting initial samples with emcee')
-        p0 = np.random.rand(nwalkers, self.x_dim)
-        sampler = emcee.EnsembleSampler(nwalkers, self.x_dim, self.loglike)
-        state = sampler.run_mcmc(p0, burn_in_steps)
-        sampler.reset()
-        sampler.run_mcmc(state, mcmc_steps)
+        init = init_scale * np.random.rand(nwalkers, self.x_dim)
+        sampler = emcee.EnsembleSampler(
+            nwalkers,
+            self.x_dim,
+            self.loglike,
+            moves=[(emcee.moves.DEMove(), 0.5),
+                   (emcee.moves.DESnookerMove(), 0.3),
+                   (emcee.moves.KDEMove(), 0.2),
+                   ]
+        )
+        sampler.run_mcmc(init, mcmc_steps)
         self.logger.info('Mean acceptance fraction: [%5.3f]' % np.mean(sampler.acceptance_fraction))
         return sampler.get_chain(flat=True, thin=thin)
 
