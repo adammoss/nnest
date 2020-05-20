@@ -23,7 +23,7 @@ import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 
-from nnest.networks import SingleSpeed, FastSlow, SingleSpeedSpline
+from nnest.networks import SingleSpeedNVP, FastSlowNVP, SingleSpeedSpline, FastSlowSpline
 from nnest.utils.logger import create_logger
 
 
@@ -61,13 +61,19 @@ class Trainer(object):
 
         if flow.lower() == 'nvp':
             if num_slow > 0:
-                self.netG = FastSlow(num_fast, num_slow, hidden_dim, num_blocks, num_layers, device=self.device,
-                                     scale=scale, base_dist=base_dist)
+                self.netG = FastSlowNVP(num_fast, num_slow, hidden_dim, num_blocks, num_layers, device=self.device,
+                                        scale=scale, prior=base_dist)
             else:
-                self.netG = SingleSpeed(x_dim, hidden_dim, num_blocks, num_layers, device=self.device,
-                                        scale=scale, base_dist=base_dist)
+                self.netG = SingleSpeedNVP(x_dim, hidden_dim, num_blocks, num_layers, device=self.device,
+                                           scale=scale, prior=base_dist)
         elif flow.lower() == 'spline':
-            self.netG = SingleSpeedSpline(x_dim, device=self.device, base_dist=base_dist)
+            if num_slow > 0:
+                assert num_slow == 2, 'Spline flow currently limited to 2 slow parameters'
+                assert num_fast == 2, 'Spline flow currently limited to 2 fast parameters'
+                self.netG = FastSlowSpline(num_fast, num_slow, device=self.device, prior=base_dist)
+            else:
+                assert x_dim == 2, 'Spline flow currently limited to 2 parameters'
+                self.netG = SingleSpeedSpline(x_dim, device=self.device, prior=base_dist)
         else:
             raise NotImplementedError
 
@@ -191,17 +197,17 @@ class Trainer(object):
 
     def get_latent_samples(self, x):
         if type(x) is np.ndarray:
-            z, _ = self.netG(torch.from_numpy(x).float().to(self.device))
+            z, _ = self.netG.forward(torch.from_numpy(x).float().to(self.device))
         else:
-            z, _ = self.netG(x)
+            z, _ = self.netG.forward(x)
         z = z.detach().cpu().numpy()
         return z
 
     def get_samples(self, z):
         if type(z) is np.ndarray:
-            x, _ = self.netG(torch.from_numpy(z).float().to(self.device), mode='inverse')
+            x, _ = self.netG.inverse(torch.from_numpy(z).float().to(self.device))
         else:
-            x, _ = self.netG(z, mode='inverse')
+            x, _ = self.netG.inverse(z)
         x = x.detach().cpu().numpy()
         return x
 
@@ -209,7 +215,7 @@ class Trainer(object):
         """ Calculate det d f^{-1} (z)/dz
         """
         z.requires_grad_(True)
-        x, _ = self.netG(z, mode='inverse')
+        x, _ = self.netG.inverse(z)
         J = torch.stack([torch.autograd.grad(outputs=x[:, i], inputs=z, retain_graph=True,
                                              grad_outputs=torch.ones(z.shape[0]))[0] for i in
                          range(x.shape[1])]).permute(1, 0, 2)
@@ -223,15 +229,10 @@ class Trainer(object):
 
         for batch_idx, data in enumerate(loader):
             if isinstance(data, list):
-                if len(data) > 1:
-                    cond_data = data[1].float()
-                    cond_data = cond_data.to(self.device)
-                else:
-                    cond_data = None
                 data = data[0]
             data = (data + jitter * torch.randn_like(data)).to(self.device)
             self.optimizer.zero_grad()
-            loss = -self.netG.log_probs(data, cond_data).mean()
+            loss = -self.netG.log_probs(data).mean()
             train_loss += loss.item()
             loss.backward()
             self.optimizer.step()
@@ -245,18 +246,14 @@ class Trainer(object):
 
         self.netG.eval()
         val_loss = 0
-        cond_data = None
 
         for batch_idx, data in enumerate(loader):
             if isinstance(data, list):
-                if len(data) > 1:
-                    cond_data = data[1].float()
-                    cond_data = cond_data.to(self.device)
                 data = data[0]
             data = data.to(self.device)
             with torch.no_grad():
                 # sum up batch loss
-                val_loss += -self.netG.log_probs(data, cond_data).mean().item()
+                val_loss += -self.netG.log_probs(data).mean().item()
 
         return val_loss / len(loader.dataset)
 

@@ -13,16 +13,12 @@ import torch.nn.functional as F
 from torch import distributions
 import numpy as np
 
-"""
-Flow 
-"""
-
 
 class NormalizingFlow(nn.Module):
     """ A sequence of Normalizing Flows is a Normalizing Flow """
 
     def __init__(self, flows):
-        super().__init__()
+        super(NormalizingFlow, self).__init__()
         self.flows = nn.ModuleList(flows)
 
     def forward(self, x):
@@ -33,46 +29,124 @@ class NormalizingFlow(nn.Module):
             x, ld = flow.forward(x)
             log_det += ld
             zs.append(x)
-        return zs, log_det
+        return zs[-1], log_det
 
-    def backward(self, z):
+    def inverse(self, z):
         m, _ = z.shape
         log_det = torch.zeros(m)
         xs = [z]
         for flow in self.flows[::-1]:
-            z, ld = flow.backward(z)
+            z, ld = flow.inverse(z)
             log_det += ld
             xs.append(z)
-        return xs, log_det
+        return xs[-1], log_det
 
 
-class FlowSequential(nn.Sequential):
-    """ A sequential container for flows.
-    In addition to a forward pass it implements a backward pass and
-    computes log jacobians.
-    """
+class NormalizingFlowModel(nn.Module):
+    """ A Normalizing Flow Model is a (prior, flow) pair """
 
-    def forward(self, inputs, cond_inputs=None, mode='direct', logdets=None):
-        """ Performs a forward or backward pass for flow modules.
-        Args:
-            inputs: a tuple of inputs and logdets
-            mode: to run direct computation or inverse
-        """
-
-        if logdets is None:
-            logdets = torch.zeros(inputs.size(0), 1, device=inputs.device)
-
-        assert mode in ['direct', 'inverse']
-        if mode == 'direct':
-            for module in self._modules.values():
-                inputs, logdet = module(inputs, cond_inputs, mode)
-                logdets += logdet
+    def __init__(self, num_inputs, flows, prior=None, device=None):
+        super(NormalizingFlowModel, self).__init__()
+        self.num_inputs = num_inputs
+        if prior is None:
+            if device is not None:
+                self.prior = distributions.MultivariateNormal(torch.zeros(num_inputs).to(device),
+                                                              torch.eye(num_inputs).to(device))
+            else:
+                self.prior = distributions.MultivariateNormal(torch.zeros(num_inputs),
+                                                              torch.eye(num_inputs))
         else:
-            for module in reversed(self._modules.values()):
-                inputs, logdet = module(inputs, cond_inputs, mode)
-                logdets += logdet
+            self.prior = prior
+        self.flow = NormalizingFlow(flows)
+        if device is not None:
+            self.flow.to(device)
+        self.device = device
 
-        return inputs, logdets
+    def forward(self, x):
+        return self.flow.forward(x)
+
+    def inverse(self, z):
+        return self.flow.inverse(z)
+
+    def log_probs(self, inputs):
+        u, log_det = self.forward(inputs)
+        log_probs = self.prior.log_prob(u)
+        return log_probs + log_det
+
+    def sample(self, num_samples=None, noise=None):
+        if noise is None:
+            noise = self.prior.sample((num_samples,))
+        if self.device is not None:
+            noise = noise.to(self.device)
+        samples, _ = self.inverse(noise)
+        return samples
+
+
+class FastSlowNormalizingFlowModel(nn.Module):
+    """ A Normalizing Flow Model is a (prior, flow) pair """
+
+    def __init__(self, num_slow, num_fast, slow_flows, fast_flows, prior=None, device=None):
+        super(FastSlowNormalizingFlowModel, self).__init__()
+        self.num_slow = num_slow
+        self.num_fast = num_fast
+        self.num_inputs = num_slow + num_fast
+        if prior is None:
+            if device is not None:
+                self.prior = distributions.MultivariateNormal(torch.zeros(self.num_inputs).to(device),
+                                                              torch.eye(self.num_inputs).to(device))
+            else:
+                self.prior = distributions.MultivariateNormal(torch.zeros(self.num_inputs),
+                                                              torch.eye(self.num_inputs))
+        else:
+            self.prior = prior
+        self.slow_flow = NormalizingFlow(slow_flows)
+        self.fast_flow = NormalizingFlow(fast_flows)
+        if device is not None:
+            self.slow_flow.to(device)
+            self.fast_flow.to(device)
+        # Combine fast and slow such that slow is unnchanged just by updating fast block
+        mask = torch.cat((torch.ones(num_slow), torch.zeros(num_fast)))
+        if device is not None:
+            mask = mask.to(device)
+        flows = [
+            CouplingLayer(
+                num_slow + num_fast, 64, mask,
+                s_act='tanh', t_act='relu', num_layers=1)
+        ]
+        self.flow = NormalizingFlow(flows)
+        if device is not None:
+            self.flow.to(device)
+        self.device = device
+
+    def forward(self, inputs):
+        slow, logdets_slow = self.slow_flow.forward(inputs[:, 0:self.num_slow])
+        fast, logdets_fast = self.fast_flow.forward(inputs[:, self.num_slow:self.num_slow + self.num_fast])
+        inputs = torch.cat((slow, fast), dim=1)
+        inputs, logdets = self.flow.forward(inputs)
+        return inputs, logdets_slow + logdets_fast + logdets
+
+    def inverse(self, inputs):
+        inputs, logdets = self.flow.inverse(inputs)
+        slow, logdets_slow = self.slow_flow.inverse(inputs[:, 0:self.num_slow])
+        fast, logdets_fast = self.fast_flow.inverse(inputs[:, self.num_slow:self.num_slow + self.num_fast])
+        inputs = torch.cat((slow, fast), dim=1)
+        return inputs, logdets_slow + logdets_fast + logdets
+
+    def log_probs(self, inputs):
+        slow, logdets_slow = self.slow_flow.forward(inputs[:, 0:self.num_slow])
+        fast, logdets_fast = self.fast_flow.forward(inputs[:, self.num_slow:self.num_slow + self.num_fast])
+        inputs = torch.cat((slow, fast), dim=1)
+        u, log_det = self.flow.forward(inputs)
+        log_probs = self.prior.log_prob(u)
+        return log_probs + log_det + logdets_slow + logdets_fast
+
+    def sample(self, num_samples=None, noise=None):
+        if noise is None:
+            noise = self.prior.sample((num_samples,))
+        if self.device is not None:
+            noise = noise.to(self.device)
+        samples, _ = self.inverse(noise)
+        return samples
 
 
 """  RealNVP    
@@ -90,12 +164,10 @@ class CouplingLayer(nn.Module):
                  num_inputs,
                  num_hidden,
                  mask,
-                 num_cond_inputs=None,
                  s_act='tanh',
                  t_act='relu',
                  num_layers=2,
-                 translate_only=False,
-                 device=None):
+                 translate_only=False):
         super(CouplingLayer, self).__init__()
 
         self.num_inputs = num_inputs
@@ -106,19 +178,14 @@ class CouplingLayer(nn.Module):
         s_act_func = activations[s_act]
         t_act_func = activations[t_act]
 
-        if num_cond_inputs is not None:
-            total_inputs = num_inputs + num_cond_inputs
-        else:
-            total_inputs = num_inputs
-
         if not translate_only:
-            scale_layers = [nn.Linear(total_inputs, num_hidden), s_act_func()]
+            scale_layers = [nn.Linear(num_inputs, num_hidden), s_act_func()]
             for i in range(0, num_layers):
                 scale_layers += [nn.Linear(num_hidden, num_hidden), s_act_func()]
             scale_layers += [nn.Linear(num_hidden, num_inputs)]
             self.scale_net = nn.Sequential(*scale_layers)
 
-        translate_layers = [nn.Linear(total_inputs, num_hidden), t_act_func()]
+        translate_layers = [nn.Linear(num_inputs, num_hidden), t_act_func()]
         for i in range(0, num_layers):
             translate_layers += [nn.Linear(num_hidden, num_hidden), t_act_func()]
         translate_layers += [nn.Linear(num_hidden, num_inputs)]
@@ -129,28 +196,27 @@ class CouplingLayer(nn.Module):
                 m.bias.data.fill_(0)
                 nn.init.orthogonal_(m.weight.data)
 
-    def forward(self, inputs, cond_inputs=None, mode='direct'):
+    def forward(self, inputs):
         mask = self.mask
-
         masked_inputs = inputs * mask
-        if cond_inputs is not None:
-            masked_inputs = torch.cat([masked_inputs, cond_inputs], -1)
-
         t = self.translate_net(masked_inputs) * (1 - mask)
-
         if self.translate_only:
-            if mode == 'direct':
-                return inputs + t, 0
-            else:
-                return inputs - t, 0
+            return inputs + t, 0
         else:
             log_s = self.scale_net(masked_inputs) * (1 - mask)
-            if mode == 'direct':
-                s = torch.exp(log_s)
-                return inputs * s + t, log_s.sum(-1, keepdim=True)
-            else:
-                s = torch.exp(-log_s)
-                return (inputs - t) * s, -log_s.sum(-1, keepdim=True)
+            s = torch.exp(log_s)
+            return inputs * s + t, log_s.sum(-1)
+
+    def inverse(self, inputs):
+        mask = self.mask
+        masked_inputs = inputs * mask
+        t = self.translate_net(masked_inputs) * (1 - mask)
+        if self.translate_only:
+            return inputs - t, 0
+        else:
+            log_s = self.scale_net(masked_inputs) * (1 - mask)
+            s = torch.exp(-log_s)
+            return (inputs - t) * s, -log_s.sum(-1)
 
 
 class ScaleLayer(nn.Module):
@@ -160,151 +226,76 @@ class ScaleLayer(nn.Module):
 
         self.scale = nn.Parameter(torch.tensor(0.0), requires_grad=True)
 
-    def forward(self, inputs, cond_inputs=None, mode='direct'):
-        if mode == 'direct':
-            s = torch.exp(self.scale)
-            return inputs * s, self.scale.sum(-1, keepdim=True)
-        else:
-            s = torch.exp(-self.scale)
-            return inputs * s, -self.scale.sum(-1, keepdim=True)
+    def forward(self, inputs):
+        s = torch.exp(self.scale)
+        return inputs * s, self.scale.sum(-1)
+
+    def inverse(self, inputs):
+        s = torch.exp(-self.scale)
+        return inputs * s, -self.scale.sum(-1)
 
 
-class SingleSpeed(nn.Module):
+class SingleSpeedNVP(NormalizingFlowModel):
 
     def __init__(self, num_inputs, num_hidden, num_blocks, num_layers, scale='',
-                 base_dist=None, device=None):
-        super(SingleSpeed, self).__init__()
-
-        self.num_inputs = num_inputs
-
-        if base_dist is None:
-            if device is not None:
-                self.base_dist = distributions.MultivariateNormal(torch.zeros(num_inputs).to(device),
-                                                                  torch.eye(num_inputs).to(device))
-            else:
-                self.base_dist = distributions.MultivariateNormal(torch.zeros(num_inputs), torch.eye(num_inputs))
-        else:
-            self.base_dist = base_dist
-
+                 prior=None, device=None):
         translate_only = scale == 'translate' or scale == 'constant'
-
         mask = torch.arange(0, num_inputs) % 2
         mask = mask.float()
         if device is not None:
             mask = mask.to(device)
-        modules = []
+        flows = []
         for _ in range(num_blocks):
-            modules += [
+            flows += [
                 CouplingLayer(
-                    num_inputs, num_hidden, mask, None,
+                    num_inputs, num_hidden, mask,
                     s_act='tanh', t_act='relu', num_layers=num_layers, translate_only=translate_only),
             ]
             if scale == 'constant':
-                modules += [ScaleLayer()]
+                flows += [ScaleLayer()]
             mask = 1 - mask
-        #self.net = FlowSequential(*modules)
-        self.net = NormalizingFlow(modules)
-        if device is not None:
-            self.net.to(device)
-
-    def forward(self, inputs, cond_inputs=None, mode='direct', logdets=None):
-        return self.net(inputs, cond_inputs=cond_inputs, mode=mode, logdets=logdets)
-
-    def log_probs(self, inputs, cond_inputs=None):
-        u, log_jacob = self.net(inputs, cond_inputs)
-        log_probs = self.base_dist.log_prob(u).unsqueeze(1)
-        return (log_probs + log_jacob).sum(-1, keepdim=True)
-
-    def sample(self, num_samples=None, noise=None, cond_inputs=None):
-        if noise is None:
-            noise = self.base_dist.sample((num_samples,))
-        device = next(self.parameters()).device
-        noise = noise.to(device)
-        if cond_inputs is not None:
-            cond_inputs = cond_inputs.to(device)
-        samples = self.forward(noise, cond_inputs, mode='inverse')[0]
-        return samples
+        super(SingleSpeedNVP, self).__init__(num_inputs, flows, prior=prior, device=device)
 
 
-class FastSlow(SingleSpeed):
+class FastSlowNVP(FastSlowNormalizingFlowModel):
 
     def __init__(self, num_fast, num_slow, num_hidden, num_blocks, num_layers, scale='',
-                 base_dist=None, device=None):
-        super(FastSlow, self).__init__(num_fast + num_slow, num_slow, num_hidden, num_blocks, num_layers)
-
-        self.num_fast = num_fast
-        self.num_slow = num_slow
-        self.num_inputs = num_fast + num_slow
-
+                 prior=None, device=None):
         # Fast block
         mask_fast = torch.arange(0, num_fast) % 2
         mask_fast = mask_fast.float()
         if device is not None:
             mask_fast = mask_fast.to(device)
-        modules_fast = []
+        fast_flows = []
         for _ in range(num_blocks):
-            modules_fast += [
+            fast_flows += [
                 CouplingLayer(
-                    num_fast, num_hidden, mask_fast, None,
+                    num_fast, num_hidden, mask_fast,
                     s_act='tanh', t_act='relu', num_layers=num_layers)
             ]
             mask_fast = 1 - mask_fast
-        self.net_fast = FlowSequential(*modules_fast)
-
         # Slow block
         mask_slow = torch.arange(0, num_slow) % 2
         mask_slow = mask_slow.float()
         if device is not None:
             mask_slow = mask_slow.to(device)
-        modules_slow = []
+        slow_flows = []
         for _ in range(num_blocks):
-            modules_slow += [
+            slow_flows += [
                 CouplingLayer(
-                    num_slow, num_hidden, mask_slow, None,
+                    num_slow, num_hidden, mask_slow,
                     s_act='tanh', t_act='relu', num_layers=num_layers)
             ]
             mask_slow = 1 - mask_slow
-        self.net_slow = FlowSequential(*modules_slow)
-
-        # Combine fast and slow such that slow is unnchanged just by updating fast block
-        mask = torch.cat((torch.ones(num_slow), torch.zeros(num_fast)))
-        if device is not None:
-            mask = mask.to(device)
-        modules = [
-            CouplingLayer(
-                num_slow + num_fast, num_hidden, mask, None,
-                s_act='tanh', t_act='relu', num_layers=num_layers)
-        ]
-        self.net = FlowSequential(*modules)
-
-    def forward(self, inputs, cond_inputs=None, mode='direct', logdets=None):
-        assert mode in ['direct', 'inverse']
-        if mode == 'direct':
-            slow, logdets_slow = self.net_slow(inputs[:, 0:self.num_slow], mode=mode)
-            fast, logdets_fast = self.net_fast(inputs[:, self.num_slow:self.num_slow + self.num_fast], mode=mode)
-            inputs = torch.cat((slow, fast), dim=1)
-            inputs, logdets = self.net(inputs, mode=mode)
-        else:
-            inputs, logdets = self.net(inputs, mode=mode)
-            slow, logdets_slow = self.net_slow(inputs[:, 0:self.num_slow], mode=mode)
-            fast, logdets_fast = self.net_fast(inputs[:, self.num_slow:self.num_slow + self.num_fast], mode=mode)
-            inputs = torch.cat((slow, fast), dim=1)
-        return inputs, logdets_slow + logdets_fast + logdets
-
-    def log_probs(self, inputs, cond_inputs=None):
-        slow, logdets_slow = self.net_slow(inputs[:, 0:self.num_slow])
-        fast, logdets_fast = self.net_fast(inputs[:, self.num_slow:self.num_slow + self.num_fast])
-        inputs = torch.cat((slow, fast), dim=1)
-        u, log_jacob = self.net(inputs)
-        log_probs = self.base_dist.log_prob(u).unsqueeze(1)
-        return (log_probs + log_jacob + logdets_slow + logdets_fast).sum(-1, keepdim=True)
+        super(FastSlowNVP, self).__init__(num_fast, num_slow, slow_flows, fast_flows, prior=prior, device=device)
 
 
 """
 Neural Spline Flows, coupling and autoregressive
 
 Paper reference: Durkan et al https://arxiv.org/abs/1906.04032
-Code reference: slightly modified https://github.com/tonyduan/normalizing-flows/blob/master/nf/flows.py
+From https://github.com/karpathy/pytorch-normalizing-flows, itself based on 
+slightly modified https://github.com/tonyduan/normalizing-flows/blob/master/nf/flows.py
 """
 
 
@@ -312,7 +303,7 @@ class MLP(nn.Module):
     """ a simple 4-layer MLP """
 
     def __init__(self, nin, nout, nh):
-        super().__init__()
+        super(MLP, self).__init__()
         self.net = nn.Sequential(
             nn.Linear(nin, nh),
             nn.LeakyReLU(0.2),
@@ -428,11 +419,11 @@ def RQS(inputs, unnormalized_widths, unnormalized_heights,
 
     if inverse:
         a = (((inputs - input_cumheights) * (input_derivatives \
-            + input_derivatives_plus_one - 2 * input_delta) \
-            + input_heights * (input_delta - input_derivatives)))
+                                             + input_derivatives_plus_one - 2 * input_delta) \
+              + input_heights * (input_delta - input_derivatives)))
         b = (input_heights * input_derivatives - (inputs - input_cumheights) \
-            * (input_derivatives + input_derivatives_plus_one \
-            - 2 * input_delta))
+             * (input_derivatives + input_derivatives_plus_one \
+                - 2 * input_delta))
         c = - input_delta * (inputs - input_cumheights)
 
         discriminant = b.pow(2) - 4 * a * c
@@ -444,11 +435,11 @@ def RQS(inputs, unnormalized_widths, unnormalized_heights,
         theta_one_minus_theta = root * (1 - root)
         denominator = input_delta \
                       + ((input_derivatives + input_derivatives_plus_one \
-                      - 2 * input_delta) * theta_one_minus_theta)
+                          - 2 * input_delta) * theta_one_minus_theta)
         derivative_numerator = input_delta.pow(2) \
                                * (input_derivatives_plus_one * root.pow(2) \
-                                + 2 * input_delta * theta_one_minus_theta \
-                                + input_derivatives * (1 - root).pow(2))
+                                  + 2 * input_delta * theta_one_minus_theta \
+                                  + input_derivatives * (1 - root).pow(2))
         logabsdet = torch.log(derivative_numerator) - 2 * torch.log(denominator)
         return outputs, -logabsdet
     else:
@@ -456,16 +447,16 @@ def RQS(inputs, unnormalized_widths, unnormalized_heights,
         theta_one_minus_theta = theta * (1 - theta)
 
         numerator = input_heights * (input_delta * theta.pow(2) \
-                    + input_derivatives * theta_one_minus_theta)
+                                     + input_derivatives * theta_one_minus_theta)
         denominator = input_delta + ((input_derivatives \
-                      + input_derivatives_plus_one - 2 * input_delta) \
-                      * theta_one_minus_theta)
+                                      + input_derivatives_plus_one - 2 * input_delta) \
+                                     * theta_one_minus_theta)
         outputs = input_cumheights + numerator / denominator
 
         derivative_numerator = input_delta.pow(2) \
                                * (input_derivatives_plus_one * theta.pow(2) \
-                                + 2 * input_delta * theta_one_minus_theta \
-                                + input_derivatives * (1 - theta).pow(2))
+                                  + 2 * input_delta * theta_one_minus_theta \
+                                  + input_derivatives * (1 - theta).pow(2))
         logabsdet = torch.log(derivative_numerator) - 2 * torch.log(denominator)
         return outputs, logabsdet
 
@@ -474,7 +465,7 @@ class NSF_AR(nn.Module):
     """ Neural spline flow, coupling layer, [Durkan et al. 2019] """
 
     def __init__(self, dim, K=5, B=3, hidden_dim=8, base_network=MLP):
-        super().__init__()
+        super(NSF_AR, self).__init__()
         self.dim = dim
         self.K = K
         self.B = B
@@ -493,31 +484,31 @@ class NSF_AR(nn.Module):
         for i in range(self.dim):
             if i == 0:
                 init_param = self.init_param.expand(x.shape[0], 3 * self.K - 1)
-                W, H, D = torch.split(init_param, self.K, dim = 1)
+                W, H, D = torch.split(init_param, self.K, dim=1)
             else:
                 out = self.layers[i - 1](x[:, :i])
-                W, H, D = torch.split(out, self.K, dim = 1)
-            W, H = torch.softmax(W, dim = 1), torch.softmax(H, dim = 1)
+                W, H, D = torch.split(out, self.K, dim=1)
+            W, H = torch.softmax(W, dim=1), torch.softmax(H, dim=1)
             W, H = 2 * self.B * W, 2 * self.B * H
             D = F.softplus(D)
             z[:, i], ld = unconstrained_RQS(x[:, i], W, H, D, inverse=False, tail_bound=self.B)
             log_det += ld
         return z, log_det
 
-    def backward(self, z):
+    def inverse(self, z):
         x = torch.zeros_like(z)
         log_det = torch.zeros(x.shape[0])
         for i in range(self.dim):
             if i == 0:
                 init_param = self.init_param.expand(x.shape[0], 3 * self.K - 1)
-                W, H, D = torch.split(init_param, self.K, dim = 1)
+                W, H, D = torch.split(init_param, self.K, dim=1)
             else:
                 out = self.layers[i - 1](x[:, :i])
-                W, H, D = torch.split(out, self.K, dim = 1)
-            W, H = torch.softmax(W, dim = 1), torch.softmax(H, dim = 1)
+                W, H, D = torch.split(out, self.K, dim=1)
+            W, H = torch.softmax(W, dim=1), torch.softmax(H, dim=1)
             W, H = 2 * self.B * W, 2 * self.B * H
             D = F.softplus(D)
-            x[:, i], ld = unconstrained_RQS(z[:, i], W, H, D, inverse = True, tail_bound = self.B)
+            x[:, i], ld = unconstrained_RQS(z[:, i], W, H, D, inverse=True, tail_bound=self.B)
             log_det += ld
         return x, log_det
 
@@ -526,7 +517,7 @@ class NSF_CL(nn.Module):
     """ Neural spline flow, coupling layer, [Durkan et al. 2019] """
 
     def __init__(self, dim, K=5, B=3, hidden_dim=8, base_network=MLP):
-        super().__init__()
+        super(NSF_CL, self).__init__()
         self.dim = dim
         self.K = K
         self.B = B
@@ -537,39 +528,39 @@ class NSF_CL(nn.Module):
         log_det = torch.zeros(x.shape[0])
         lower, upper = x[:, :self.dim // 2], x[:, self.dim // 2:]
         out = self.f1(lower).reshape(-1, self.dim // 2, 3 * self.K - 1)
-        W, H, D = torch.split(out, self.K, dim = 2)
-        W, H = torch.softmax(W, dim = 2), torch.softmax(H, dim = 2)
+        W, H, D = torch.split(out, self.K, dim=2)
+        W, H = torch.softmax(W, dim=2), torch.softmax(H, dim=2)
         W, H = 2 * self.B * W, 2 * self.B * H
         D = F.softplus(D)
         upper, ld = unconstrained_RQS(upper, W, H, D, inverse=False, tail_bound=self.B)
-        log_det += torch.sum(ld, dim = 1)
+        log_det += torch.sum(ld, dim=1)
         out = self.f2(upper).reshape(-1, self.dim // 2, 3 * self.K - 1)
-        W, H, D = torch.split(out, self.K, dim = 2)
-        W, H = torch.softmax(W, dim = 2), torch.softmax(H, dim = 2)
+        W, H, D = torch.split(out, self.K, dim=2)
+        W, H = torch.softmax(W, dim=2), torch.softmax(H, dim=2)
         W, H = 2 * self.B * W, 2 * self.B * H
         D = F.softplus(D)
         lower, ld = unconstrained_RQS(lower, W, H, D, inverse=False, tail_bound=self.B)
-        log_det += torch.sum(ld, dim = 1)
-        return torch.cat([lower, upper], dim = 1), log_det
+        log_det += torch.sum(ld, dim=1)
+        return torch.cat([lower, upper], dim=1), log_det
 
-    def backward(self, z):
+    def inverse(self, z):
         log_det = torch.zeros(z.shape[0])
         lower, upper = z[:, :self.dim // 2], z[:, self.dim // 2:]
         out = self.f2(upper).reshape(-1, self.dim // 2, 3 * self.K - 1)
-        W, H, D = torch.split(out, self.K, dim = 2)
-        W, H = torch.softmax(W, dim = 2), torch.softmax(H, dim = 2)
+        W, H, D = torch.split(out, self.K, dim=2)
+        W, H = torch.softmax(W, dim=2), torch.softmax(H, dim=2)
         W, H = 2 * self.B * W, 2 * self.B * H
         D = F.softplus(D)
         lower, ld = unconstrained_RQS(lower, W, H, D, inverse=True, tail_bound=self.B)
-        log_det += torch.sum(ld, dim = 1)
+        log_det += torch.sum(ld, dim=1)
         out = self.f1(lower).reshape(-1, self.dim // 2, 3 * self.K - 1)
-        W, H, D = torch.split(out, self.K, dim = 2)
-        W, H = torch.softmax(W, dim = 2), torch.softmax(H, dim = 2)
+        W, H, D = torch.split(out, self.K, dim=2)
+        W, H = torch.softmax(W, dim=2), torch.softmax(H, dim=2)
         W, H = 2 * self.B * W, 2 * self.B * H
         D = F.softplus(D)
-        upper, ld = unconstrained_RQS(upper, W, H, D, inverse = True, tail_bound = self.B)
-        log_det += torch.sum(ld, dim = 1)
-        return torch.cat([lower, upper], dim = 1), log_det
+        upper, ld = unconstrained_RQS(upper, W, H, D, inverse=True, tail_bound=self.B)
+        log_det += torch.sum(ld, dim=1)
+        return torch.cat([lower, upper], dim=1), log_det
 
 
 class Invertible1x1Conv(nn.Module):
@@ -578,7 +569,7 @@ class Invertible1x1Conv(nn.Module):
     """
 
     def __init__(self, dim):
-        super().__init__()
+        super(Invertible1x1Conv, self).__init__()
         self.dim = dim
         Q = torch.nn.init.orthogonal_(torch.randn(dim, dim))
         P, L, U = torch.lu_unpack(*Q.lu())
@@ -600,7 +591,7 @@ class Invertible1x1Conv(nn.Module):
         log_det = torch.sum(torch.log(torch.abs(self.S)))
         return z, log_det
 
-    def backward(self, z):
+    def inverse(self, z):
         W = self._assemble_W()
         W_inv = torch.inverse(W)
         x = z @ W_inv
@@ -615,7 +606,7 @@ class AffineConstantFlow(nn.Module):
     """
 
     def __init__(self, dim, scale=True, shift=True):
-        super().__init__()
+        super(AffineConstantFlow, self).__init__()
         self.s = nn.Parameter(torch.randn(1, dim, requires_grad=True)) if scale else None
         self.t = nn.Parameter(torch.randn(1, dim, requires_grad=True)) if shift else None
 
@@ -626,7 +617,7 @@ class AffineConstantFlow(nn.Module):
         log_det = torch.sum(s, dim=1)
         return z, log_det
 
-    def backward(self, z):
+    def inverse(self, z):
         s = self.s if self.s is not None else z.new_zeros(z.size())
         t = self.t if self.t is not None else z.new_zeros(z.size())
         x = (z - t) * torch.exp(-s)
@@ -642,7 +633,7 @@ class ActNorm(AffineConstantFlow):
     """
 
     def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
+        super(ActNorm, self).__init__(*args, **kwargs)
         self.data_dep_init_done = False
 
     def forward(self, x):
@@ -652,51 +643,32 @@ class ActNorm(AffineConstantFlow):
             self.s.data = (-torch.log(x.std(dim=0, keepdim=True))).detach()
             self.t.data = (-(x * torch.exp(self.s)).mean(dim=0, keepdim=True)).detach()
             self.data_dep_init_done = True
-        return super().forward(x)
+        return super(ActNorm, self).forward(x)
 
 
-class SingleSpeedSpline(nn.Module):
+class SingleSpeedSpline(NormalizingFlowModel):
 
-    def __init__(self, num_inputs, base_dist=None, device=None):
-        super(SingleSpeedSpline, self).__init__()
-
-        self.num_inputs = num_inputs
-
-        if base_dist is None:
-            if device is not None:
-                self.base_dist = distributions.MultivariateNormal(torch.zeros(num_inputs).to(device),
-                                                                  torch.eye(num_inputs).to(device))
-            else:
-                self.base_dist = distributions.MultivariateNormal(torch.zeros(num_inputs), torch.eye(num_inputs))
-        else:
-            self.base_dist = base_dist
-
-        nfs_flow = NSF_CL if True else NSF_AR
+    def __init__(self, num_inputs, prior=None, device=None):
+        nfs_flow = NSF_CL
         flows = [nfs_flow(dim=num_inputs, K=8, B=3, hidden_dim=16) for _ in range(3)]
         convs = [Invertible1x1Conv(dim=num_inputs) for _ in flows]
         norms = [ActNorm(dim=num_inputs) for _ in flows]
         flows = list(itertools.chain(*zip(norms, convs, flows)))
-        self.net = NormalizingFlow(flows)
-        if device is not None:
-            self.net.to(device)
+        super(SingleSpeedSpline, self).__init__(num_inputs, flows, prior=prior, device=device)
 
-    def forward(self, inputs, cond_inputs=None, mode='direct', logdets=None):
-        if mode == 'direct':
-            z, log_det = self.net(inputs)
-            return z[-1], log_det.unsqueeze(1)
-        elif mode == 'inverse':
-            x, log_det = self.net.backward(inputs)
-            return x[-1], log_det.unsqueeze(1)
 
-    def log_probs(self, inputs, cond_inputs=None):
-        u, log_jacob = self.forward(inputs)
-        log_probs = self.base_dist.log_prob(u).unsqueeze(1)
-        return (log_probs + log_jacob).sum(-1, keepdim=True)
+class FastSlowSpline(FastSlowNormalizingFlowModel):
 
-    def sample(self, num_samples=None, noise=None, cond_inputs=None):
-        if noise is None:
-            noise = self.base_dist.sample((num_samples,))
-        device = next(self.parameters()).device
-        noise = noise.to(device)
-        samples = self.forward(noise, mode='inverse')[0]
-        return samples
+    def __init__(self, num_fast, num_slow, prior=None, device=None):
+        nfs_flow = NSF_CL
+        # Slow block
+        slow_flows = [nfs_flow(dim=num_slow, K=8, B=3, hidden_dim=16) for _ in range(3)]
+        convs = [Invertible1x1Conv(dim=num_slow) for _ in slow_flows]
+        norms = [ActNorm(dim=num_slow) for _ in slow_flows]
+        slow_flows = list(itertools.chain(*zip(norms, convs, slow_flows)))
+        # Fast block
+        fast_flows = [nfs_flow(dim=num_slow, K=8, B=3, hidden_dim=16) for _ in range(3)]
+        convs = [Invertible1x1Conv(dim=num_slow) for _ in fast_flows]
+        norms = [ActNorm(dim=num_slow) for _ in fast_flows]
+        fast_flows = list(itertools.chain(*zip(norms, convs, fast_flows)))
+        super(FastSlowSpline, self).__init__(num_fast, num_slow, slow_flows, fast_flows, prior=prior, device=device)

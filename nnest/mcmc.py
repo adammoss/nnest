@@ -81,7 +81,7 @@ class MCMCSampler(Sampler):
             num_chains = init_x.shape[0]
             z, _ = self.trainer.netG(torch.from_numpy(init_x).float().to(self.trainer.device))
             z = z.detach()
-            # Add the backward version of x rather than init_x due to numerical precision
+            # Add the inverse version of x rather than init_x due to numerical precision
             x = self.trainer.get_samples(z)
             logl, derived = self.loglike(self.transform(x))
         else:
@@ -124,12 +124,11 @@ class MCMCSampler(Sampler):
             z_prime = z + dz
 
             # Jacobian is det d f^{-1} (z)/dz
-            x, log_det_J = self.trainer.netG(z, mode='inverse')
-            x_prime, log_det_J_prime = self.trainer.netG(z_prime, mode='inverse')
+            x, log_det_J = self.trainer.netG.inverse(z)
+            x_prime, log_det_J_prime = self.trainer.netG.inverse(z_prime)
             x = x.detach().cpu().numpy()
             x_prime = x_prime.detach().cpu().numpy()
-            delta_log_det_J = (log_det_J_prime - log_det_J).detach()
-            log_ratio_1 = delta_log_det_J.squeeze(dim=1)
+            log_ratio_1 = (log_det_J_prime - log_det_J).detach()
 
             # Check not out of prior range
             if max_prior is not None:

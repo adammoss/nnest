@@ -8,6 +8,11 @@ import errno
 
 def create_logger(module_name, level=logging.INFO):
     logger = logging.getLogger(module_name)
+    try:
+        if logger.hasHandlers():
+            logger.handlers.clear()
+    except:
+        pass
     logger.setLevel(level)
     handler = logging.StreamHandler(sys.stdout)
     handler.setLevel(level)
