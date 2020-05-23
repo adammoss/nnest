@@ -15,7 +15,7 @@ import numpy as np
 
 
 class NormalizingFlow(nn.Module):
-    """ A sequence of Normalizing Flows is a Normalizing Flow """
+    """ A sequence of normalizing flows """
 
     def __init__(self, flows):
         super(NormalizingFlow, self).__init__()
@@ -43,7 +43,7 @@ class NormalizingFlow(nn.Module):
 
 
 class NormalizingFlowModel(nn.Module):
-    """ A Normalizing Flow Model is a (prior, flow) pair """
+    """ A normalizing flow model is a (prior, flow) pair """
 
     def __init__(self, num_inputs, flows, prior=None, device=None):
         super(NormalizingFlowModel, self).__init__()
@@ -83,7 +83,9 @@ class NormalizingFlowModel(nn.Module):
 
 
 class FastSlowNormalizingFlowModel(nn.Module):
-    """ A Normalizing Flow Model is a (prior, flow) pair """
+    """ Fast-slow normalizing flow model. Fast and slow blocks each have their own
+     normalizing flow, then they are coupled such that the slow block is unchanged by updated
+     only the fast block"""
 
     def __init__(self, num_fast, num_slow, fast_flows, slow_flows, prior=None, device=None):
         super(FastSlowNormalizingFlowModel, self).__init__()
@@ -147,6 +149,92 @@ class FastSlowNormalizingFlowModel(nn.Module):
             noise = noise.to(self.device)
         samples, _ = self.inverse(noise)
         return samples
+
+
+"""
+Choleksy flow, based on 
+https://github.com/bayesiains/nsf/blob/master/nde/transforms/lu.py
+"""
+
+
+class Choleksy(nn.Module):
+    """A linear transform which we parameterize by Y = L X, where L is a lower triangular matrix. This is related to
+    the transform Y = P^{-1} X where P is the Choleksy decomposition of the covariance matrix C = P P^T"""
+
+    def __init__(self, features, identity_init=True, eps=1e-3):
+        super(Choleksy, self).__init__()
+
+        self.features = features
+        self.eps = eps
+
+        self.lower_indices = np.tril_indices(features, k=-1)
+        self.diag_indices = np.diag_indices(features)
+
+        n_triangular_entries = ((features - 1) * features) // 2
+
+        self.bias = nn.Parameter(torch.zeros(features))
+        self.lower_entries = nn.Parameter(torch.zeros(n_triangular_entries))
+        self.unconstrained_diag = nn.Parameter(torch.zeros(features))
+
+        self._initialize(identity_init)
+
+    def _initialize(self, identity_init):
+        init.zeros_(self.bias)
+
+        if identity_init:
+            init.zeros_(self.lower_entries)
+            constant = np.log(np.exp(1 - self.eps) - 1)
+            init.constant_(self.unconstrained_diag, constant)
+        else:
+            stdv = 1.0 / np.sqrt(self.features)
+            init.uniform_(self.lower_entries, -stdv, stdv)
+            init.uniform_(self.unconstrained_diag, -stdv, stdv)
+
+    def _create_lower_upper(self):
+        lower = self.lower_entries.new_zeros(self.features, self.features)
+        lower[self.lower_indices[0], self.lower_indices[1]] = self.lower_entries
+        lower[self.diag_indices[0], self.diag_indices[1]] = self.diag
+        upper = lower.T
+        return lower, upper
+
+    def forward(self, inputs):
+        lower, upper = self._create_lower_upper()
+        outputs = F.linear(inputs, lower, self.bias)
+        logabsdet = self.logabsdet() * inputs.new_ones(outputs.shape[0])
+        return outputs, logabsdet
+
+    def inverse(self, inputs):
+        lower, upper = self._create_lower_upper()
+        outputs = inputs - self.bias
+        outputs, _ = torch.triangular_solve(outputs.t(), lower, upper=False, unitriangular=False)
+        outputs = outputs.t()
+        logabsdet = -self.logabsdet()
+        logabsdet = logabsdet * inputs.new_ones(outputs.shape[0])
+        return outputs, logabsdet
+
+    @property
+    def inverse_covariance(self):
+        return torch.inverse(self.covariance)
+
+    @property
+    def covariance(self):
+        lower, upper = self._create_lower_upper()
+        p = torch.inverse(lower)
+        return p @ p.T
+
+    @property
+    def diag(self):
+        return F.softplus(self.unconstrained_diag) + self.eps
+
+    def logabsdet(self):
+        return torch.sum(torch.log(self.diag))
+
+
+class SingleSpeedCholeksy(NormalizingFlowModel):
+
+    def __init__(self, num_inputs, prior=None, device=None):
+        flows = [Choleksy(num_inputs)]
+        super(SingleSpeedCholeksy, self).__init__(num_inputs, flows, prior=prior, device=device)
 
 
 """  RealNVP    
