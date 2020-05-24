@@ -10,13 +10,13 @@ def main(args):
     from nnest.likelihoods import Himmelblau, Rosenbrock, Gaussian, Eggbox, GaussianShell, GaussianMix
 
     if args.likelihood.lower() == 'himmelblau':
-        like = Himmelblau()
+        like = Himmelblau(args.x_dim)
     elif args.likelihood.lower() == 'rosenbrock':
         like = Rosenbrock(args.x_dim)
     elif args.likelihood.lower() == 'gaussian':
         like = Gaussian(args.x_dim, args.corr)
     elif args.likelihood.lower() == 'eggbox':
-        like = Eggbox()
+        like = Eggbox(args.x_dim)
     elif args.likelihood.lower() == 'shell':
         like = GaussianShell(args.x_dim)
     elif args.likelihood.lower() == 'mixture':

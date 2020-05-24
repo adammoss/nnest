@@ -21,7 +21,7 @@ def main(args):
         base_dist = None
 
     if args.likelihood.lower() == 'himmelblau':
-        like = Himmelblau()
+        like = Himmelblau(args.x_dim)
         transform = lambda x: 5 * x
     elif args.likelihood.lower() == 'rosenbrock':
         like = Rosenbrock(args.x_dim)
@@ -30,7 +30,7 @@ def main(args):
         like = Gaussian(args.x_dim, args.corr)
         transform = lambda x: 3 * x
     elif args.likelihood.lower() == 'eggbox':
-        like = Eggbox()
+        like = Eggbox(args.x_dim)
         transform = lambda x: x * 5 * np.pi
     elif args.likelihood.lower() == 'shell':
         like = GaussianShell(args.x_dim)

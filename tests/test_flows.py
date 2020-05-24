@@ -64,8 +64,8 @@ def test_spline():
 
 
 def test_nvp_slow():
-    for num_slow in [2, 3, 4]:
-        for num_fast in [2, 3, 4]:
+    for num_slow in [2, 3, 4, 5]:
+        for num_fast in [2, 3, 4, 5]:
             dims = num_slow + num_fast
             t = Trainer(dims, num_slow=num_slow, flow='nvp')
             test_data = np.random.normal(size=(10, dims))
@@ -90,8 +90,8 @@ def test_nvp_slow():
 
 
 def test_spline_slow():
-    for num_slow in [2, 3, 4]:
-        for num_fast in [2, 3, 4]:
+    for num_slow in [2, 3, 4, 5]:
+        for num_fast in [2, 3, 4, 5]:
             dims = num_slow + num_fast
             t = Trainer(dims, num_slow=num_slow, flow='spline')
             test_data = np.random.normal(size=(10, dims))
