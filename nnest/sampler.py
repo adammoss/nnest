@@ -28,7 +28,7 @@ class Sampler(object):
                  num_slow=0,
                  num_derived=0,
                  batch_size=100,
-                 flow='nvp',
+                 flow='spline',
                  num_blocks=5,
                  num_layers=2,
                  log_dir='logs/test',
