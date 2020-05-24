@@ -31,10 +31,10 @@ class Trainer(object):
 
     def __init__(self,
                  x_dim,
-                 hidden_dim=64,
+                 hidden_dim=16,
                  num_slow=0,
                  batch_size=100,
-                 flow='nvp',
+                 flow='spline',
                  scale='',
                  num_blocks=5,
                  num_layers=2,
