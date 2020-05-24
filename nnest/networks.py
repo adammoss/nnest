@@ -15,7 +15,7 @@ import numpy as np
 
 
 class NormalizingFlow(nn.Module):
-    """ A sequence of Normalizing Flows is a Normalizing Flow """
+    """ A sequence of normalizing flows """
 
     def __init__(self, flows):
         super(NormalizingFlow, self).__init__()
@@ -43,7 +43,7 @@ class NormalizingFlow(nn.Module):
 
 
 class NormalizingFlowModel(nn.Module):
-    """ A Normalizing Flow Model is a (prior, flow) pair """
+    """ A normalizing flow model is a (prior, flow) pair """
 
     def __init__(self, num_inputs, flows, prior=None, device=None):
         super(NormalizingFlowModel, self).__init__()
@@ -83,12 +83,14 @@ class NormalizingFlowModel(nn.Module):
 
 
 class FastSlowNormalizingFlowModel(nn.Module):
-    """ A Normalizing Flow Model is a (prior, flow) pair """
+    """ Fast-slow normalizing flow model. Fast and slow blocks each have their own
+     normalizing flow, then they are coupled such that the slow block is unchanged by updated
+     only the fast block"""
 
-    def __init__(self, num_slow, num_fast, slow_flows, fast_flows, prior=None, device=None):
+    def __init__(self, num_fast, num_slow, fast_flows, slow_flows, prior=None, device=None):
         super(FastSlowNormalizingFlowModel, self).__init__()
-        self.num_slow = num_slow
         self.num_fast = num_fast
+        self.num_slow = num_slow
         self.num_inputs = num_slow + num_fast
         if prior is None:
             if device is not None:
@@ -99,11 +101,11 @@ class FastSlowNormalizingFlowModel(nn.Module):
                                                               torch.eye(self.num_inputs))
         else:
             self.prior = prior
-        self.slow_flow = NormalizingFlow(slow_flows)
         self.fast_flow = NormalizingFlow(fast_flows)
+        self.slow_flow = NormalizingFlow(slow_flows)
         if device is not None:
-            self.slow_flow.to(device)
             self.fast_flow.to(device)
+            self.slow_flow.to(device)
         # Combine fast and slow such that slow is unnchanged just by updating fast block
         mask = torch.cat((torch.ones(num_slow), torch.zeros(num_fast)))
         if device is not None:
@@ -119,22 +121,22 @@ class FastSlowNormalizingFlowModel(nn.Module):
         self.device = device
 
     def forward(self, inputs):
-        slow, logdets_slow = self.slow_flow.forward(inputs[:, 0:self.num_slow])
-        fast, logdets_fast = self.fast_flow.forward(inputs[:, self.num_slow:self.num_slow + self.num_fast])
+        slow, logdets_slow = self.slow_flow.forward(inputs[:, :self.num_slow])
+        fast, logdets_fast = self.fast_flow.forward(inputs[:, self.num_slow:])
         inputs = torch.cat((slow, fast), dim=1)
         inputs, logdets = self.flow.forward(inputs)
         return inputs, logdets_slow + logdets_fast + logdets
 
     def inverse(self, inputs):
         inputs, logdets = self.flow.inverse(inputs)
-        slow, logdets_slow = self.slow_flow.inverse(inputs[:, 0:self.num_slow])
-        fast, logdets_fast = self.fast_flow.inverse(inputs[:, self.num_slow:self.num_slow + self.num_fast])
+        slow, logdets_slow = self.slow_flow.inverse(inputs[:, :self.num_slow])
+        fast, logdets_fast = self.fast_flow.inverse(inputs[:, self.num_slow:])
         inputs = torch.cat((slow, fast), dim=1)
         return inputs, logdets_slow + logdets_fast + logdets
 
     def log_probs(self, inputs):
-        slow, logdets_slow = self.slow_flow.forward(inputs[:, 0:self.num_slow])
-        fast, logdets_fast = self.fast_flow.forward(inputs[:, self.num_slow:self.num_slow + self.num_fast])
+        slow, logdets_slow = self.slow_flow.forward(inputs[:, :self.num_slow])
+        fast, logdets_fast = self.fast_flow.forward(inputs[:, self.num_slow:])
         inputs = torch.cat((slow, fast), dim=1)
         u, log_det = self.flow.forward(inputs)
         log_probs = self.prior.log_prob(u)
@@ -147,6 +149,92 @@ class FastSlowNormalizingFlowModel(nn.Module):
             noise = noise.to(self.device)
         samples, _ = self.inverse(noise)
         return samples
+
+
+"""
+Choleksy flow, based on 
+https://github.com/bayesiains/nsf/blob/master/nde/transforms/lu.py
+"""
+
+
+class Choleksy(nn.Module):
+    """A linear transform which we parameterize by Y = L X, where L is a lower triangular matrix. This is related to
+    the transform Y = P^{-1} X where P is the Choleksy decomposition of the covariance matrix C = P P^T"""
+
+    def __init__(self, features, identity_init=True, eps=1e-3):
+        super(Choleksy, self).__init__()
+
+        self.features = features
+        self.eps = eps
+
+        self.lower_indices = np.tril_indices(features, k=-1)
+        self.diag_indices = np.diag_indices(features)
+
+        n_triangular_entries = ((features - 1) * features) // 2
+
+        self.bias = nn.Parameter(torch.zeros(features))
+        self.lower_entries = nn.Parameter(torch.zeros(n_triangular_entries))
+        self.unconstrained_diag = nn.Parameter(torch.zeros(features))
+
+        self._initialize(identity_init)
+
+    def _initialize(self, identity_init):
+        init.zeros_(self.bias)
+
+        if identity_init:
+            init.zeros_(self.lower_entries)
+            constant = np.log(np.exp(1 - self.eps) - 1)
+            init.constant_(self.unconstrained_diag, constant)
+        else:
+            stdv = 1.0 / np.sqrt(self.features)
+            init.uniform_(self.lower_entries, -stdv, stdv)
+            init.uniform_(self.unconstrained_diag, -stdv, stdv)
+
+    def _create_lower_upper(self):
+        lower = self.lower_entries.new_zeros(self.features, self.features)
+        lower[self.lower_indices[0], self.lower_indices[1]] = self.lower_entries
+        lower[self.diag_indices[0], self.diag_indices[1]] = self.diag
+        upper = lower.T
+        return lower, upper
+
+    def forward(self, inputs):
+        lower, upper = self._create_lower_upper()
+        outputs = F.linear(inputs, lower, self.bias)
+        logabsdet = self.logabsdet() * inputs.new_ones(outputs.shape[0])
+        return outputs, logabsdet
+
+    def inverse(self, inputs):
+        lower, upper = self._create_lower_upper()
+        outputs = inputs - self.bias
+        outputs, _ = torch.triangular_solve(outputs.t(), lower, upper=False, unitriangular=False)
+        outputs = outputs.t()
+        logabsdet = -self.logabsdet()
+        logabsdet = logabsdet * inputs.new_ones(outputs.shape[0])
+        return outputs, logabsdet
+
+    @property
+    def inverse_covariance(self):
+        return torch.inverse(self.covariance)
+
+    @property
+    def covariance(self):
+        lower, upper = self._create_lower_upper()
+        p = torch.inverse(lower)
+        return p @ p.T
+
+    @property
+    def diag(self):
+        return F.softplus(self.unconstrained_diag) + self.eps
+
+    def logabsdet(self):
+        return torch.sum(torch.log(self.diag))
+
+
+class SingleSpeedCholeksy(NormalizingFlowModel):
+
+    def __init__(self, num_inputs, prior=None, device=None):
+        flows = [Choleksy(num_inputs)]
+        super(SingleSpeedCholeksy, self).__init__(num_inputs, flows, prior=prior, device=device)
 
 
 """  RealNVP    
@@ -287,15 +375,16 @@ class FastSlowNVP(FastSlowNormalizingFlowModel):
                     s_act='tanh', t_act='relu', num_layers=num_layers)
             ]
             mask_slow = 1 - mask_slow
-        super(FastSlowNVP, self).__init__(num_fast, num_slow, slow_flows, fast_flows, prior=prior, device=device)
+        super(FastSlowNVP, self).__init__(num_fast, num_slow, fast_flows, slow_flows, prior=prior, device=device)
 
 
 """
-Neural Spline Flows, coupling and autoregressive
+Neural Spline Flows
 
 Paper reference: Durkan et al https://arxiv.org/abs/1906.04032
 From https://github.com/karpathy/pytorch-normalizing-flows, itself based on 
-slightly modified https://github.com/tonyduan/normalizing-flows/blob/master/nf/flows.py
+ https://github.com/tonyduan/normalizing-flows/blob/master/nf/flows.py
+ Modified here to include odd numbers of dimensions
 """
 
 
@@ -461,80 +550,40 @@ def RQS(inputs, unnormalized_widths, unnormalized_heights,
         return outputs, logabsdet
 
 
-class NSF_AR(nn.Module):
-    """ Neural spline flow, coupling layer, [Durkan et al. 2019] """
-
-    def __init__(self, dim, K=5, B=3, hidden_dim=8, base_network=MLP):
-        super(NSF_AR, self).__init__()
-        self.dim = dim
-        self.K = K
-        self.B = B
-        self.layers = nn.ModuleList()
-        self.init_param = nn.Parameter(torch.Tensor(3 * K - 1))
-        for i in range(1, dim):
-            self.layers += [base_network(i, 3 * K - 1, hidden_dim)]
-        self.reset_parameters()
-
-    def reset_parameters(self):
-        init.uniform_(self.init_param, - 1 / 2, 1 / 2)
-
-    def forward(self, x):
-        z = torch.zeros_like(x)
-        log_det = torch.zeros(z.shape[0])
-        for i in range(self.dim):
-            if i == 0:
-                init_param = self.init_param.expand(x.shape[0], 3 * self.K - 1)
-                W, H, D = torch.split(init_param, self.K, dim=1)
-            else:
-                out = self.layers[i - 1](x[:, :i])
-                W, H, D = torch.split(out, self.K, dim=1)
-            W, H = torch.softmax(W, dim=1), torch.softmax(H, dim=1)
-            W, H = 2 * self.B * W, 2 * self.B * H
-            D = F.softplus(D)
-            z[:, i], ld = unconstrained_RQS(x[:, i], W, H, D, inverse=False, tail_bound=self.B)
-            log_det += ld
-        return z, log_det
-
-    def inverse(self, z):
-        x = torch.zeros_like(z)
-        log_det = torch.zeros(x.shape[0])
-        for i in range(self.dim):
-            if i == 0:
-                init_param = self.init_param.expand(x.shape[0], 3 * self.K - 1)
-                W, H, D = torch.split(init_param, self.K, dim=1)
-            else:
-                out = self.layers[i - 1](x[:, :i])
-                W, H, D = torch.split(out, self.K, dim=1)
-            W, H = torch.softmax(W, dim=1), torch.softmax(H, dim=1)
-            W, H = 2 * self.B * W, 2 * self.B * H
-            D = F.softplus(D)
-            x[:, i], ld = unconstrained_RQS(z[:, i], W, H, D, inverse=True, tail_bound=self.B)
-            log_det += ld
-        return x, log_det
-
-
 class NSF_CL(nn.Module):
     """ Neural spline flow, coupling layer, [Durkan et al. 2019] """
 
     def __init__(self, dim, K=5, B=3, hidden_dim=8, base_network=MLP):
         super(NSF_CL, self).__init__()
         self.dim = dim
+        self.half_dim = dim // 2
+        self.even = self.dim == 2 * self.half_dim
         self.K = K
         self.B = B
-        self.f1 = base_network(dim // 2, (3 * K - 1) * dim // 2, hidden_dim)
-        self.f2 = base_network(dim // 2, (3 * K - 1) * dim // 2, hidden_dim)
+        if self.even:
+            self.f1 = base_network(self.half_dim, (3 * K - 1) * self.half_dim, hidden_dim)
+            self.f2 = base_network(self.half_dim, (3 * K - 1) * self.half_dim, hidden_dim)
+        else:
+            self.f1 = base_network(self.half_dim + 1, (3 * K - 1) * self.half_dim, hidden_dim)
+            self.f2 = base_network(self.half_dim, (3 * K - 1) * (self.half_dim + 1), hidden_dim)
 
     def forward(self, x):
         log_det = torch.zeros(x.shape[0])
-        lower, upper = x[:, :self.dim // 2], x[:, self.dim // 2:]
-        out = self.f1(lower).reshape(-1, self.dim // 2, 3 * self.K - 1)
+        if self.even:
+            lower, upper = x[:, :self.half_dim], x[:, self.half_dim:]
+        else:
+            lower, upper = x[:, :self.half_dim + 1], x[:, self.half_dim + 1:]
+        out = self.f1(lower).reshape(-1, self.half_dim, 3 * self.K - 1)
         W, H, D = torch.split(out, self.K, dim=2)
         W, H = torch.softmax(W, dim=2), torch.softmax(H, dim=2)
         W, H = 2 * self.B * W, 2 * self.B * H
         D = F.softplus(D)
         upper, ld = unconstrained_RQS(upper, W, H, D, inverse=False, tail_bound=self.B)
         log_det += torch.sum(ld, dim=1)
-        out = self.f2(upper).reshape(-1, self.dim // 2, 3 * self.K - 1)
+        if self.even:
+            out = self.f2(upper).reshape(-1, self.half_dim, 3 * self.K - 1)
+        else:
+            out = self.f2(upper).reshape(-1, self.half_dim + 1, 3 * self.K - 1)
         W, H, D = torch.split(out, self.K, dim=2)
         W, H = torch.softmax(W, dim=2), torch.softmax(H, dim=2)
         W, H = 2 * self.B * W, 2 * self.B * H
@@ -545,15 +594,19 @@ class NSF_CL(nn.Module):
 
     def inverse(self, z):
         log_det = torch.zeros(z.shape[0])
-        lower, upper = z[:, :self.dim // 2], z[:, self.dim // 2:]
-        out = self.f2(upper).reshape(-1, self.dim // 2, 3 * self.K - 1)
+        if self.even:
+            lower, upper = z[:, :self.half_dim], z[:, self.half_dim:]
+            out = self.f2(upper).reshape(-1, self.half_dim, 3 * self.K - 1)
+        else:
+            lower, upper = z[:, :self.half_dim + 1], z[:, self.half_dim + 1:]
+            out = self.f2(upper).reshape(-1, self.half_dim + 1, 3 * self.K - 1)
         W, H, D = torch.split(out, self.K, dim=2)
         W, H = torch.softmax(W, dim=2), torch.softmax(H, dim=2)
         W, H = 2 * self.B * W, 2 * self.B * H
         D = F.softplus(D)
         lower, ld = unconstrained_RQS(lower, W, H, D, inverse=True, tail_bound=self.B)
         log_det += torch.sum(ld, dim=1)
-        out = self.f1(lower).reshape(-1, self.dim // 2, 3 * self.K - 1)
+        out = self.f1(lower).reshape(-1, self.half_dim, 3 * self.K - 1)
         W, H, D = torch.split(out, self.K, dim=2)
         W, H = torch.softmax(W, dim=2), torch.softmax(H, dim=2)
         W, H = 2 * self.B * W, 2 * self.B * H
@@ -648,9 +701,8 @@ class ActNorm(AffineConstantFlow):
 
 class SingleSpeedSpline(NormalizingFlowModel):
 
-    def __init__(self, num_inputs, prior=None, device=None):
-        nfs_flow = NSF_CL
-        flows = [nfs_flow(dim=num_inputs, K=8, B=3, hidden_dim=16) for _ in range(3)]
+    def __init__(self, num_inputs, hidden_dim, num_blocks, num_bins=8, tail_bound=3, prior=None, device=None):
+        flows = [NSF_CL(dim=num_inputs, K=num_bins, B=tail_bound, hidden_dim=hidden_dim) for _ in range(num_blocks)]
         convs = [Invertible1x1Conv(dim=num_inputs) for _ in flows]
         norms = [ActNorm(dim=num_inputs) for _ in flows]
         flows = list(itertools.chain(*zip(norms, convs, flows)))
@@ -659,16 +711,15 @@ class SingleSpeedSpline(NormalizingFlowModel):
 
 class FastSlowSpline(FastSlowNormalizingFlowModel):
 
-    def __init__(self, num_fast, num_slow, prior=None, device=None):
-        nfs_flow = NSF_CL
+    def __init__(self, num_fast, num_slow, hidden_dim, num_blocks, num_bins=8, tail_bound=3, prior=None, device=None):
+        # Fast block
+        fast_flows = [NSF_CL(dim=num_fast, K=num_bins, B=tail_bound, hidden_dim=16) for _ in range(num_blocks)]
+        convs = [Invertible1x1Conv(dim=num_fast) for _ in fast_flows]
+        norms = [ActNorm(dim=num_fast) for _ in fast_flows]
+        fast_flows = list(itertools.chain(*zip(norms, convs, fast_flows)))
         # Slow block
-        slow_flows = [nfs_flow(dim=num_slow, K=8, B=3, hidden_dim=16) for _ in range(3)]
+        slow_flows = [NSF_CL(dim=num_slow, K=num_bins, B=tail_bound, hidden_dim=hidden_dim) for _ in range(num_blocks)]
         convs = [Invertible1x1Conv(dim=num_slow) for _ in slow_flows]
         norms = [ActNorm(dim=num_slow) for _ in slow_flows]
         slow_flows = list(itertools.chain(*zip(norms, convs, slow_flows)))
-        # Fast block
-        fast_flows = [nfs_flow(dim=num_slow, K=8, B=3, hidden_dim=16) for _ in range(3)]
-        convs = [Invertible1x1Conv(dim=num_slow) for _ in fast_flows]
-        norms = [ActNorm(dim=num_slow) for _ in fast_flows]
-        fast_flows = list(itertools.chain(*zip(norms, convs, fast_flows)))
-        super(FastSlowSpline, self).__init__(num_fast, num_slow, slow_flows, fast_flows, prior=prior, device=device)
+        super(FastSlowSpline, self).__init__(num_fast, num_slow, fast_flows, slow_flows, prior=prior, device=device)

@@ -23,7 +23,7 @@ import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 
-from nnest.networks import SingleSpeedNVP, FastSlowNVP, SingleSpeedSpline, FastSlowSpline
+from nnest.networks import SingleSpeedCholeksy, SingleSpeedNVP, FastSlowNVP, SingleSpeedSpline, FastSlowSpline
 from nnest.utils.logger import create_logger
 
 
@@ -31,7 +31,7 @@ class Trainer(object):
 
     def __init__(self,
                  x_dim,
-                 hidden_dim,
+                 hidden_dim=64,
                  num_slow=0,
                  batch_size=100,
                  flow='nvp',
@@ -43,7 +43,8 @@ class Trainer(object):
                  load_model='',
                  log_dir='logs',
                  use_gpu=False,
-                 log=True
+                 log=True,
+                 learning_rate=0.0001
                  ):
 
         self.device = torch.device(
@@ -59,21 +60,21 @@ class Trainer(object):
         num_fast = x_dim - num_slow
         self.num_slow = num_slow
 
-        if flow.lower() == 'nvp':
+        if flow.lower() == 'choleksy':
+            self.netG = SingleSpeedCholeksy(x_dim, device=self.device, prior=base_dist)
+        elif flow.lower() == 'nvp':
             if num_slow > 0:
-                self.netG = FastSlowNVP(num_fast, num_slow, hidden_dim, num_blocks, num_layers, device=self.device,
-                                        scale=scale, prior=base_dist)
+                self.netG = FastSlowNVP(num_fast, num_slow, hidden_dim, num_blocks, num_layers, scale=scale,
+                                        device=self.device, prior=base_dist)
             else:
-                self.netG = SingleSpeedNVP(x_dim, hidden_dim, num_blocks, num_layers, device=self.device,
-                                           scale=scale, prior=base_dist)
+                self.netG = SingleSpeedNVP(x_dim, hidden_dim, num_blocks, num_layers, scale=scale,
+                                           device=self.device, prior=base_dist)
         elif flow.lower() == 'spline':
             if num_slow > 0:
-                assert num_slow == 2, 'Spline flow currently limited to 2 slow parameters'
-                assert num_fast == 2, 'Spline flow currently limited to 2 fast parameters'
-                self.netG = FastSlowSpline(num_fast, num_slow, device=self.device, prior=base_dist)
+                self.netG = FastSlowSpline(num_fast, num_slow, hidden_dim, num_blocks, device=self.device,
+                                           prior=base_dist)
             else:
-                assert x_dim == 2, 'Spline flow currently limited to 2 parameters'
-                self.netG = SingleSpeedSpline(x_dim, device=self.device, prior=base_dist)
+                self.netG = SingleSpeedSpline(x_dim, hidden_dim, num_blocks, device=self.device, prior=base_dist)
         else:
             raise NotImplementedError
 
@@ -97,7 +98,7 @@ class Trainer(object):
             ))
 
         self.optimizer = torch.optim.Adam(
-            self.netG.parameters(), lr=0.0001, weight_decay=1e-6)
+            self.netG.parameters(), lr=learning_rate, weight_decay=1e-6)
 
         self.logger = create_logger(__name__, level=logging.INFO)
         self.log = log
@@ -112,7 +113,7 @@ class Trainer(object):
     def train(
             self,
             samples,
-            max_iters=5000,
+            max_iters=10000,
             log_interval=50,
             save_interval=50,
             jitter=0.0,

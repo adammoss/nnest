@@ -112,7 +112,7 @@ class Sampler(object):
         if trainer is None:
             self.trainer = Trainer(
                 x_dim,
-                hidden_dim,
+                hidden_dim=hidden_dim,
                 num_slow=num_slow,
                 batch_size=batch_size,
                 flow=flow,
