@@ -2,9 +2,7 @@
 
 Neural network accelerated nested and MCMC sampling. The target distribution is first transformed into a diagonal, unit variance Gaussian by a series of non-linear, invertible, and non-volume preserving flows. Efficient MCMC proposals can then be made in this simpler latent space.
 
-![latent](https://github.com/adammoss/nnest/blob/master/rosenbock.png)
-![latent](https://github.com/adammoss/nnest/blob/master/himmelblau.png)
-![latent](https://github.com/adammoss/nnest/blob/master/gauss.png)
+![latent](https://github.com/adammoss/nnest/blob/master/ring.png)
 
 ### Installation
 
