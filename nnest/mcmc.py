@@ -22,6 +22,7 @@ matplotlib.use('Agg')
 
 from nnest.sampler import Sampler
 from nnest.utils.evaluation import acceptance_rate, effective_sample_size, mean_jump_distance
+from nnest.utils.buffer import Buffer
 
 
 class MCMCSampler(Sampler):
@@ -67,8 +68,8 @@ class MCMCSampler(Sampler):
             out_chain=None,
             max_prior=None,
             max_start_tries=100,
-            output_interval=0,
-            stats_interval=0):
+            output_interval=None,
+            stats_interval=None):
 
         self.trainer.netG.eval()
 
@@ -100,7 +101,7 @@ class MCMCSampler(Sampler):
         derived_samples.append(derived)
         likes.append(logl)
 
-        iters = tqdm(range(mcmc_steps)) if show_progress else range(mcmc_steps)
+        iters = tqdm(range(1, mcmc_steps + 1)) if show_progress else range(1, mcmc_steps + 1)
         scale = step_size
         accept = 0
         reject = 0
@@ -187,12 +188,13 @@ class MCMCSampler(Sampler):
             derived_samples.append(derived)
             likes.append(logl)
 
-            if output_interval > 0 and it % output_interval == 0 and out_chain is not None:
+            if output_interval is not None and it % output_interval == 0 and out_chain is not None:
                 self._save_samples(np.transpose(np.array(self.transform(samples)), axes=[1, 0, 2]),
                                    np.transpose(np.array(likes), axes=[1, 0]),
                                    derived_samples=np.transpose(np.array(derived_samples), axes=[1, 0, 2]))
 
-            if stats_interval > 0 and it % stats_interval == 0:
+            if stats_interval is not None and it % stats_interval == 0:
+                self.logger.info('MCMC step [%d], ncalls [%d] ' % (it, ncall))
                 self._chain_stats(np.transpose(np.array(samples), axes=[1, 0, 2]))
 
         # Transpose samples so shape is (chain_num, iteration, dim)
@@ -247,7 +249,7 @@ class MCMCSampler(Sampler):
                             f.write(" ".join(["%.5E" % v for v in derived_samples[ib, i, :]]))
                         f.write("\n")
 
-    def _init_samples(self, mcmc_steps=100, nwalkers=20, thin=1, init_scale=1):
+    def _init_samples(self, steps=500, nwalkers=10, thin=1, init_scale=1, burn_in=100):
         import emcee
         self.logger.info('Getting initial samples with emcee')
         init = init_scale * np.random.rand(nwalkers, self.x_dim)
@@ -255,14 +257,19 @@ class MCMCSampler(Sampler):
             nwalkers,
             self.x_dim,
             self.loglike,
-            moves=[(emcee.moves.DEMove(), 0.5),
-                   (emcee.moves.DESnookerMove(), 0.3),
-                   (emcee.moves.KDEMove(), 0.2),
-                   ]
+            moves=[
+                (emcee.moves.DEMove(), 0.5),
+                (emcee.moves.DESnookerMove(), 0.3),
+                (emcee.moves.KDEMove(), 0.2),
+            ]
         )
-        sampler.run_mcmc(init, mcmc_steps)
+        sampler.run_mcmc(init, steps)
+        try:
+            self.logger.info(sampler.get_autocorr_time())
+        except:
+            self.logger.info('Autocorrelation exceeds chain length')
         self.logger.info('Mean acceptance fraction: [%5.3f]' % np.mean(sampler.acceptance_fraction))
-        return sampler.get_chain(flat=True, thin=thin)
+        return sampler.get_chain(flat=True, thin=thin, discard=burn_in)
 
     def _read_samples(self, fileroot, match='', ignore_rows=0.3, thin=1):
         names = ['p%i' % i for i in range(int(self.num_params))]
@@ -278,16 +285,16 @@ class MCMCSampler(Sampler):
 
     def run(
             self,
-            train_iters=200,
-            mcmc_steps=5000,
-            mcmc_num_chains=5,
-            bootstrap_iters=2,
-            bootstrap_mcmc_steps=1000,
+            num_training_examples=1000,
+            train_interval=5,
+            bootstrap_mcmc_steps=100,
+            bootstrap_burn_in=20,
+            bootstrap_iters=10,
             bootstrap_fileroot='',
             bootstrap_match='',
-            bootstrap_num_chains=5,
+            mcmc_steps=5000,
+            mcmc_num_chains=5,
             step_size=0,
-            single_thin=1,
             ignore_rows=0.3,
             stats_interval=200,
             output_interval=100,
@@ -300,37 +307,42 @@ class MCMCSampler(Sampler):
         if self.log:
             self.logger.info('Alpha [%5.4f]' % (step_size))
 
+        buffer = Buffer(max_size=num_training_examples)
+
+        # Initial samples
+        if init_samples is not None:
+            samples = init_samples
+        elif bootstrap_fileroot:
+            samples = self._read_samples(bootstrap_fileroot, match=bootstrap_match, ignore_rows=ignore_rows)
+        else:
+            samples = self._init_samples()
+
+        buffer.insert(samples[np.random.choice(samples.shape[0], num_training_examples, replace=False)])
+
         ncall = 0
 
-        for it in range(bootstrap_iters):
+        for it in range(1, bootstrap_iters + 1):
 
-            self.logger.info('Bootstrap step [%d]' % (it+1))
-
-            if it == 0:
-                if init_samples is not None:
-                    samples = init_samples
-                elif bootstrap_fileroot:
-                    samples = self._read_mc_samples(bootstrap_fileroot, match=bootstrap_match, ignore_rows=ignore_rows)
-                else:
-                    samples = self._init_samples()
-
-            else:
+            if it > 1:
                 samples, latent_samples, derived_samples, likes, scale, nc = self.mcmc_sample(
-                    mcmc_steps=bootstrap_mcmc_steps, num_chains=bootstrap_num_chains,
-                    step_size=step_size, dynamic_step_size=False, stats_interval=stats_interval)
+                    mcmc_steps=bootstrap_mcmc_steps, num_chains=mcmc_num_chains,
+                    step_size=step_size, dynamic_step_size=False, stats_interval=bootstrap_mcmc_steps)
                 samples = self.transform(samples)
-                mc = MCSamples(samples=[samples[i, :, :].squeeze() for i in range(bootstrap_num_chains)],
-                               ignore_rows=ignore_rows)
-                samples = mc.makeSingleSamples(single_thin=single_thin)
+                samples = samples[:, bootstrap_burn_in:, :]
+                samples = samples.reshape((samples.shape[0]*samples.shape[1], samples.shape[2]))
+                buffer.insert(samples[np.random.choice(samples.shape[0], int(samples.shape[0] / 10), replace=False)])
                 ncall += nc
 
-            samples = samples[:, :self.x_dim]
-            mean = np.mean(samples, axis=0)
-            std = np.std(samples, axis=0)
-            # Normalise samples
-            samples = (samples - mean) / std
-            self.trainer.train(samples, max_iters=train_iters, jitter=jitter)
-            self.transform = lambda x: x * std + mean
+            if it == 1 or it % train_interval == 0:
+                training_samples = buffer()[:, :self.x_dim]
+                mean = np.mean(training_samples, axis=0)
+                std = np.std(training_samples, axis=0)
+                # Normalise samples
+                training_samples = (training_samples - mean) / std
+                self.trainer.train(training_samples, jitter=jitter)
+                self.transform = lambda x: x * std + mean
+
+            self.logger.info('Bootstrap step [%d], ncalls [%d] ' % (it, ncall))
 
         samples, latent_samples, derived_samples, likes, scale, nc = self.mcmc_sample(
             mcmc_steps=mcmc_steps,  num_chains=mcmc_num_chains, step_size=step_size, dynamic_step_size=False,
