@@ -2,9 +2,7 @@
 
 Neural network accelerated nested and MCMC sampling. The target distribution is first transformed into a diagonal, unit variance Gaussian by a series of non-linear, invertible, and non-volume preserving flows. Efficient MCMC proposals can then be made in this simpler latent space.
 
-![latent](https://github.com/adammoss/nnest/blob/master/rosenbock.png)
-![latent](https://github.com/adammoss/nnest/blob/master/himmelblau.png)
-![latent](https://github.com/adammoss/nnest/blob/master/gauss.png)
+![latent](https://github.com/adammoss/nnest/blob/master/flows.png)
 
 ### Installation
 
@@ -23,21 +21,21 @@ python setup.py install
 
 Nested sampling examples can be found in the `examples/nested` directory, and can be run with e.g. 
 ```
-python rosenbrock.py
+python run.py --x_dim 2 --likelihood rosenbrock
+```
+There is also an example notebook. Runs can be analysed by
+```
+python analyse.py
 ```
 
 ### MCMC Sampling
 
-MCMC sampling examples can be found in the `examples/mcmc` directory, and can be run with e.g. 
+MCMC sampling (work in progress) examples can be found in the `examples/mcmc` directory, and can be run with e.g. 
 ```
-python examples/mcmc/rosenbrock.py
+python run.py --x_dim 2 --likelihood rosenbrock
 ```
-### Analysing runs
+There is also an example notebook.
 
-Runs can be analysed by
-```
-python analyse.py
-```
 ### Attribution
 
 Please cite [Moss (2019)](https://arxiv.org/abs/1903.10860) if you find the 

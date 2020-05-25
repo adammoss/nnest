@@ -57,8 +57,9 @@ class Rosenbrock(Likelihood):
 class Himmelblau(Likelihood):
     x_dim = 2
 
-    def __init__(self):
-        pass
+    def __init__(self, x_dim):
+        assert self.x_dim == x_dim
+        super(Himmelblau, self).__init__(x_dim)
 
     def __call__(self, x):
         return - (x[0] ** 2 + x[1] - 11.) ** 2 - (x[0] + x[1] ** 2 - 7.) ** 2
@@ -94,8 +95,9 @@ class Gaussian(Likelihood):
 class Eggbox(Likelihood):
     x_dim = 2
 
-    def __init__(self):
-        pass
+    def __init__(self, x_dim):
+        assert self.x_dim == x_dim
+        super(Eggbox, self).__init__(x_dim)
 
     def __call__(self, x):
         chi = (np.cos(x[0] / 2.)) * (np.cos(x[1] / 2.))

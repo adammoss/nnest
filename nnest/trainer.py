@@ -28,6 +28,8 @@ from nnest.utils.logger import create_logger
 
 
 class Trainer(object):
+    best_validation_epoch = None
+    best_validation_loss = None
 
     def __init__(self,
                  x_dim,
@@ -193,6 +195,8 @@ class Trainer(object):
                 break
 
         self.logger.info('Best epoch [%i] validation loss [%5.4f]' % (best_validation_epoch, best_validation_loss))
+        self.best_validation_epoch = best_validation_epoch
+        self.best_validation_loss = best_validation_loss
 
         self.netG.load_state_dict(best_model.state_dict())
 
