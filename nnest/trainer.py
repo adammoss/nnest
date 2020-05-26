@@ -48,6 +48,24 @@ class Trainer(object):
                  log=True,
                  learning_rate=0.0001
                  ):
+        """
+
+        :param x_dim:
+        :param hidden_dim:
+        :param num_slow:
+        :param batch_size:
+        :param flow:
+        :param scale:
+        :param num_blocks:
+        :param num_layers:
+        :param base_dist:
+        :param train:
+        :param load_model:
+        :param log_dir:
+        :param use_gpu:
+        :param log:
+        :param learning_rate:
+        """
 
         self.device = torch.device(
             'cuda' if use_gpu and torch.cuda.is_available() else 'cpu')

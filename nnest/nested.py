@@ -40,12 +40,35 @@ class NestedSampler(MCMCSampler):
                  scale='',
                  num_live_points=1000
                  ):
+        """
+
+        :param x_dim:
+        :param loglike:
+        :param transform:
+        :param append_run_num:
+        :param run_num:
+        :param hidden_dim:
+        :param num_slow:
+        :param num_derived:
+        :param batch_size:
+        :param flow:
+        :param num_blocks:
+        :param num_layers:
+        :param log_dir:
+        :param use_gpu:
+        :param base_dist:
+        :param scale:
+        :param num_live_points:
+        """
+
+        prior = lambda x: -np.inf if np.any(np.abs(x) > 1) else 0
 
         super(NestedSampler, self).__init__(x_dim, loglike, transform=transform, append_run_num=append_run_num,
                                             run_num=run_num, hidden_dim=hidden_dim, num_slow=num_slow,
                                             num_derived=num_derived, batch_size=batch_size, flow=flow,
                                             num_blocks=num_blocks, num_layers=num_layers, log_dir=log_dir,
-                                            use_gpu=use_gpu, base_dist=base_dist, scale=scale)
+                                            use_gpu=use_gpu, base_dist=base_dist, scale=scale, prior=prior,
+                                            transform_prior=False)
 
         self.num_live_points = num_live_points
         self.sampler = 'nested'
@@ -61,7 +84,7 @@ class NestedSampler(MCMCSampler):
 
     def run(
             self,
-            method=None,
+            method='rejection_prior',
             mcmc_steps=0,
             mcmc_burn_in=0,
             mcmc_num_chains=10,
@@ -76,9 +99,6 @@ class NestedSampler(MCMCSampler):
             num_test_mcmc_samples=0,
             test_mcmc_steps=1000,
             test_mcmc_burn_in=0):
-
-        if method is None:
-            method = 'rejection_prior'
 
         if update_interval is None:
             update_interval = max(1, round(self.num_live_points))
@@ -148,7 +168,7 @@ class NestedSampler(MCMCSampler):
             if self.use_mpi:
                 if self.mpi_rank == 0:
                     chunks = [[] for _ in range(self.mpi_size)]
-                    for i, chunk in enumerate(active_v):
+                    for i, chunk in enumerate(active_u):
                         chunks[i % self.mpi_size].append(chunk)
                 else:
                     chunks = None
@@ -158,7 +178,7 @@ class NestedSampler(MCMCSampler):
                 recv_active_logl = self.comm.bcast(recv_active_logl, root=0)
                 active_logl = np.concatenate(recv_active_logl, axis=0)
             else:
-                active_logl, active_derived = self.loglike(active_v)
+                active_logl, active_derived = self.loglike(active_u)
 
             saved_v = []  # Stored points for posterior results
             saved_logl = []
@@ -201,7 +221,8 @@ class NestedSampler(MCMCSampler):
             loglstar = active_logl[worst]
 
             # Train flow
-            if first_time or it % update_interval == 0:
+            if (method == 'mcmc' or method == 'rejection_flow') and (first_time or it % update_interval == 0):
+
                 self.trainer.train(active_u, max_iters=train_iters, jitter=jitter)
 
                 if num_test_mcmc_samples > 0:
@@ -210,7 +231,7 @@ class NestedSampler(MCMCSampler):
                         [active_u[worst:worst + 1, :] for i in range(num_test_mcmc_samples)])
                     test_samples, _, _, _, _, scale, _ = self.mcmc_sample(
                         init_x=init_x, loglstar=loglstar, mcmc_steps=test_mcmc_steps + test_mcmc_burn_in,
-                        max_prior=1, step_size=step_size, dynamic_step_size=True)
+                        step_size=step_size, dynamic_step_size=True)
                     np.save(os.path.join(self.logs['chains'], 'test_samples.npy'), test_samples)
                     self._chain_stats(test_samples, mean=np.mean(active_u, axis=0), std=np.std(active_u, axis=0))
                 first_time = False
@@ -226,8 +247,7 @@ class NestedSampler(MCMCSampler):
                     # Simple rejection sampling over prior
                     while True:
                         u = 2 * (np.random.uniform(size=(1, self.x_dim)) - 0.5)
-                        v = self.transform(u)
-                        logl, der = self.loglike(v)
+                        logl, der = self.loglike(u)
                         nc += 1
                         if logl > loglstar:
                             break
@@ -235,7 +255,7 @@ class NestedSampler(MCMCSampler):
                 else:
 
                     # Rejection sampling using flow
-                    u, logl, nc = self.rejection_sample(self.loglike, loglstar, init_x=active_u, max_prior=1)
+                    u, logl, nc = self.rejection_sample(loglstar, init_x=active_u)
 
                 ncs.append(nc)
                 mean_calls = np.mean(ncs[-10:])
@@ -286,7 +306,7 @@ class NestedSampler(MCMCSampler):
                         init_x = active_u[idx, :]
                         samples, latent_samples, derived_samples, likes, scale, nc = self.mcmc_sample(
                             init_x=init_x, loglstar=loglstar, mcmc_steps=mcmc_steps + mcmc_burn_in,
-                            max_prior=1, step_size=step_size, dynamic_step_size=True)
+                            step_size=step_size, dynamic_step_size=True)
                         if self.use_mpi:
                             recv_samples = self.comm.gather(samples, root=0)
                             recv_likes = self.comm.gather(likes, root=0)
@@ -378,7 +398,6 @@ class NestedSampler(MCMCSampler):
             self,
             loglstar,
             init_x=None,
-            max_prior=None,
             enlargement_factor=1.3,
             constant_efficiency_factor=None):
 
@@ -398,19 +417,17 @@ class NestedSampler(MCMCSampler):
 
         nc = 0
         while True:
-            if hasattr(self.trainer.netG.base_dist, 'usample'):
-                z = self.trainer.netG.base_dist.usample(sample_shape=(1,)) * enlargement_factor
+            if hasattr(self.trainer.netG.prior, 'usample'):
+                z = self.trainer.netG.prior.usample(sample_shape=(1,)) * enlargement_factor
             else:
                 z = np.random.randn(self.x_dim)
                 z = enlargement_factor * r * z * np.random.rand() ** (1. / self.x_dim) / np.sqrt(np.sum(z ** 2))
                 z = np.expand_dims(z, 0)
-            x, log_det_J = self.trainer.netG(torch.from_numpy(z).float().to(self.trainer.device), mode='inverse')
-            delta_log_det_J = (log_det_J - m).detach()
-            log_ratio_1 = delta_log_det_J.squeeze(dim=1)
+            x, log_det_J = self.trainer.netG.inverse(torch.from_numpy(z).float().to(self.trainer.device))
+            log_ratio_1 = (log_det_J - m).detach()
             x = x.detach().cpu().numpy()
 
-            # Check not out of prior range
-            if np.any(np.abs(x) > max_prior):
+            if self.prior(x) < -1e30:
                 continue
 
             # Check volume constraint
@@ -419,7 +436,7 @@ class NestedSampler(MCMCSampler):
             if rnd_u > ratio:
                 continue
 
-            logl = self.loglike(self.transform(x))
+            logl = self.loglike(x)
             idx = np.where(np.isfinite(logl) & (logl < loglstar))[0]
             log_ratio_1[idx] = -np.inf
             ratio = (log_ratio_1).exp().clamp(max=1)

@@ -22,6 +22,7 @@ class Sampler(object):
                  x_dim,
                  loglike,
                  transform=None,
+                 prior=None,
                  append_run_num=True,
                  run_num=None,
                  hidden_dim=16,
@@ -36,7 +37,8 @@ class Sampler(object):
                  use_gpu=False,
                  base_dist=None,
                  scale='',
-                 trainer=None
+                 trainer=None,
+                 transform_prior=True,
                  ):
 
         self.x_dim = x_dim
@@ -46,6 +48,18 @@ class Sampler(object):
         assert x_dim > num_slow
         self.num_slow = num_slow
         self.num_fast = x_dim - num_slow
+
+        if transform is None:
+            self.transform = lambda x: x
+        else:
+            def safe_transform(x):
+                if isinstance(x, list):
+                    x = np.array(x)
+                if len(x.shape) == 1:
+                    assert x.shape[0] == self.x_dim
+                    x = np.expand_dims(x, 0)
+                return transform(x)
+            self.transform = safe_transform
         
         def safe_loglike(x):
             if isinstance(x, list):
@@ -53,7 +67,9 @@ class Sampler(object):
             if len(x.shape) == 1:
                 assert x.shape[0] == self.x_dim
                 x = np.expand_dims(x, 0)
-            res = loglike(x)
+            # Note the flow works in terms of rescaled coordinates. Transform back Do the
+            # original co-ordinates here to evaluate the likelihood
+            res = loglike(self.transform(x))
             if isinstance(res, tuple):
                 logl, derived = res
             else:
@@ -69,17 +85,20 @@ class Sampler(object):
 
         self.loglike = safe_loglike
 
-        if transform is None:
-            self.transform = lambda x: x
+        if prior is None:
+            self.prior = lambda x: 0
         else:
-            def safe_transform(x):
+            def safe_prior(x):
                 if isinstance(x, list):
                     x = np.array(x)
                 if len(x.shape) == 1:
                     assert x.shape[0] == self.x_dim
                     x = np.expand_dims(x, 0)
-                return transform(x)
-            self.transform = safe_transform
+                if transform_prior:
+                    return np.array([prior(self.transform(x)) for x in x])
+                else:
+                    return np.array([prior(x) for x in x])
+            self.prior = safe_prior
 
         self.use_mpi = False
         try:

@@ -10,6 +10,7 @@ from __future__ import division
 
 import os
 import glob
+import copy
 
 import torch
 import numpy as np
@@ -31,6 +32,7 @@ class MCMCSampler(Sampler):
                  x_dim,
                  loglike,
                  transform=None,
+                 prior=None,
                  append_run_num=True,
                  run_num=None,
                  hidden_dim=16,
@@ -45,13 +47,38 @@ class MCMCSampler(Sampler):
                  scale='',
                  use_gpu=False,
                  trainer=None,
-                 oversample_rate=-1):
+                 oversample_rate=-1,
+                 transform_prior=True):
+        """
+
+        :param x_dim:
+        :param loglike:
+        :param transform:
+        :param prior:
+        :param append_run_num:
+        :param run_num:
+        :param hidden_dim:
+        :param num_slow:
+        :param num_derived:
+        :param batch_size:
+        :param flow:
+        :param num_blocks:
+        :param num_layers:
+        :param log_dir:
+        :param base_dist:
+        :param scale:
+        :param use_gpu:
+        :param trainer:
+        :param oversample_rate:
+        :param transform_prior:
+        """
 
         super(MCMCSampler, self).__init__(x_dim, loglike, transform=transform, append_run_num=append_run_num,
                                           run_num=run_num, hidden_dim=hidden_dim, num_slow=num_slow,
                                           num_derived=num_derived, batch_size=batch_size, flow=flow,
                                           num_blocks=num_blocks, num_layers=num_layers, log_dir=log_dir,
-                                          use_gpu=use_gpu, base_dist=base_dist, scale=scale, trainer=trainer)
+                                          use_gpu=use_gpu, base_dist=base_dist, scale=scale, trainer=trainer,
+                                          prior=prior, transform_prior=transform_prior)
 
         self.sampler = 'mcmc'
         self.oversample_rate = oversample_rate if oversample_rate > 0 else self.num_fast / self.x_dim
@@ -66,7 +93,6 @@ class MCMCSampler(Sampler):
             loglstar=None,
             show_progress=False,
             out_chain=None,
-            max_prior=None,
             max_start_tries=100,
             output_interval=None,
             stats_interval=None):
@@ -84,14 +110,15 @@ class MCMCSampler(Sampler):
             z = z.detach()
             # Add the inverse version of x rather than init_x due to numerical precision
             x = self.trainer.get_samples(z)
-            logl, derived = self.loglike(self.transform(x))
+            logl, derived = self.loglike(x)
         else:
             for i in range(max_start_tries):
                 z = torch.randn(num_chains, self.trainer.z_dim, device=self.trainer.device)
                 z = z.detach()
                 x = self.trainer.get_samples(z)
-                logl, derived = self.loglike(self.transform(x))
-                if np.all(logl > -1e30):
+                logl, derived = self.loglike(x)
+                logl_prior = self.prior(x)
+                if np.all(logl > -1e30) and np.all(logl_prior) > -1e30:
                     break
                 if i == max_start_tries - 1:
                     raise Exception('Could not find starting value')
@@ -127,43 +154,42 @@ class MCMCSampler(Sampler):
             # Jacobian is det d f^{-1} (z)/dz
             x, log_det_J = self.trainer.netG.inverse(z)
             x_prime, log_det_J_prime = self.trainer.netG.inverse(z_prime)
-            x = x.detach().cpu().numpy()
             x_prime = x_prime.detach().cpu().numpy()
             log_ratio_1 = (log_det_J_prime - log_det_J).detach()
 
-            # Check not out of prior range
-            if max_prior is not None:
-                prior = np.logical_or(np.abs(x) > max_prior, np.abs(x_prime) > max_prior)
-                idx = np.where([np.any(p) for p in prior])
-                log_ratio_1[idx] = -np.inf
+            if self.prior is not None:
+                logl_prior = self.prior(x_prime)
+                log_ratio_1[np.where(logl_prior < -1e30)] = -np.inf
 
+            # Check prior and Jacobian is accepted
             rnd_u = torch.rand(log_ratio_1.shape, device=self.trainer.device)
             ratio = log_ratio_1.exp().clamp(max=1)
             mask = (rnd_u < ratio).int()
             logl_prime = np.full(num_chains, logl)
             derived_prime = np.copy(derived)
 
-            # Only evaluate likelihood if prior and volume is accepted
-            if self.loglike is not None and self.transform is not None:
-                for idx, im in enumerate(mask):
-                    if im:
-                        if not fast:
-                            ncall += 1
-                        lp, der = self.loglike(self.transform(x_prime[idx]))
-                        if loglstar is not None:
-                            if np.isfinite(lp) and lp >= loglstar:
-                                logl_prime[idx] = lp
-                                derived_prime[idx] = der
-                            else:
-                                mask[idx] = 0
+            # Only evaluate likelihood if prior and Jacobian is accepted
+            for idx, im in enumerate(mask):
+                if im:
+                    if not fast:
+                        ncall += 1
+                    lp, der = self.loglike(x_prime[idx])
+                    if self.prior is not None:
+                        lp += logl_prior[idx]
+                    if loglstar is not None:
+                        if np.isfinite(lp) and lp >= loglstar:
+                            logl_prime[idx] = lp
+                            derived_prime[idx] = der
                         else:
-                            if lp >= logl[idx]:
-                                logl_prime[idx] = lp
-                            elif rnd_u[idx].cpu().numpy() < np.clip(np.exp(lp - logl[idx]), 0, 1):
-                                logl_prime[idx] = lp
-                                derived_prime[idx] = der
-                            else:
-                                mask[idx] = 0
+                            mask[idx] = 0
+                    else:
+                        if lp >= logl[idx]:
+                            logl_prime[idx] = lp
+                        elif rnd_u[idx].cpu().numpy() < np.clip(np.exp(lp - logl[idx]), 0, 1):
+                            logl_prime[idx] = lp
+                            derived_prime[idx] = der
+                        else:
+                            mask[idx] = 0
 
             if 2 * torch.sum(mask).cpu().numpy() > num_chains:
                 accept += 1
@@ -249,27 +275,26 @@ class MCMCSampler(Sampler):
                             f.write(" ".join(["%.5E" % v for v in derived_samples[ib, i, :]]))
                         f.write("\n")
 
-    def _init_samples(self, steps=500, nwalkers=10, thin=1, init_scale=1, burn_in=100):
-        import emcee
-        self.logger.info('Getting initial samples with emcee')
-        init = init_scale * np.random.rand(nwalkers, self.x_dim)
-        sampler = emcee.EnsembleSampler(
-            nwalkers,
-            self.x_dim,
-            self.loglike,
-            moves=[
-                (emcee.moves.DEMove(), 0.5),
-                (emcee.moves.DESnookerMove(), 0.3),
-                (emcee.moves.KDEMove(), 0.2),
-            ]
-        )
-        sampler.run_mcmc(init, steps)
-        try:
-            self.logger.info(sampler.get_autocorr_time())
-        except:
-            self.logger.info('Autocorrelation exceeds chain length')
-        self.logger.info('Mean acceptance fraction: [%5.3f]' % np.mean(sampler.acceptance_fraction))
-        return sampler.get_chain(flat=True, thin=thin, discard=burn_in)
+    def _init_samples(self, steps=500, init_scale=1, burn_in=100,
+                      propose_scale=0.01, num_chains=10, temperature=1.0):
+        x_current = init_scale * (np.random.rand(num_chains, self.x_dim) - 0.5)
+        samples = [x_current]
+        loglike_current, _ = self.loglike(x_current)
+        loglike_current += self.prior(x_current)
+        for i in range(steps):
+            x_propose = x_current + propose_scale * np.random.normal(size=(num_chains, self.x_dim))
+            loglike_propose, _ = self.loglike(x_propose)
+            loglike_propose += self.prior(x_propose)
+            ratio = np.ones(num_chains)
+            delta_loglike = (loglike_propose - loglike_current) / temperature
+            ratio[np.where(delta_loglike < 0)] = np.exp(delta_loglike[np.where(delta_loglike < 0)])
+            r = np.random.uniform(low=0, high=1, size=(num_chains,))
+            x_current[np.where(ratio > r)] = x_propose[np.where(ratio > r)]
+            loglike_current[np.where(ratio > r)] = loglike_propose[np.where(ratio > r)]
+            samples.append(copy.copy(x_current))
+        samples = np.array(samples)
+        samples = samples[burn_in:, :, :]
+        return samples.reshape(samples.shape[0]*samples.shape[1], samples.shape[2])
 
     def _read_samples(self, fileroot, match='', ignore_rows=0.3, thin=1):
         names = ['p%i' % i for i in range(int(self.num_params))]
@@ -299,7 +324,8 @@ class MCMCSampler(Sampler):
             stats_interval=200,
             output_interval=100,
             init_samples=None,
-            jitter=-1.0):
+            jitter=-1.0,
+            max_iters=50):
 
         if step_size == 0.0:
             step_size = 1 / self.x_dim ** 0.5
@@ -339,7 +365,7 @@ class MCMCSampler(Sampler):
                 std = np.std(training_samples, axis=0)
                 # Normalise samples
                 training_samples = (training_samples - mean) / std
-                self.trainer.train(training_samples, jitter=jitter)
+                self.trainer.train(training_samples, jitter=jitter, max_iters=max_iters)
                 self.transform = lambda x: x * std + mean
 
             self.logger.info('Bootstrap step [%d], ncalls [%d] ' % (it, ncall))
