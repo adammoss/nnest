@@ -46,25 +46,28 @@ class Trainer(object):
                  log_dir='logs',
                  use_gpu=False,
                  log=True,
-                 learning_rate=0.0001
+                 learning_rate=0.0001,
+                 weight_decay=1e-6
                  ):
         """
 
-        :param x_dim:
-        :param hidden_dim:
-        :param num_slow:
-        :param batch_size:
-        :param flow:
-        :param scale:
-        :param num_blocks:
-        :param num_layers:
-        :param base_dist:
-        :param train:
-        :param load_model:
-        :param log_dir:
-        :param use_gpu:
-        :param log:
-        :param learning_rate:
+        Args:
+            x_dim:
+            hidden_dim:
+            num_slow:
+            batch_size:
+            flow:
+            scale:
+            num_blocks:
+            num_layers:
+            base_dist:
+            train:
+            load_model:
+            log_dir:
+            use_gpu:
+            log:
+            learning_rate:
+            weight_decay:
         """
 
         self.device = torch.device(
@@ -118,7 +121,7 @@ class Trainer(object):
             ))
 
         self.optimizer = torch.optim.Adam(
-            self.netG.parameters(), lr=learning_rate, weight_decay=1e-6)
+            self.netG.parameters(), lr=learning_rate, weight_decay=weight_decay)
 
         self.logger = create_logger(__name__, level=logging.INFO)
         self.log = log
@@ -136,9 +139,24 @@ class Trainer(object):
             max_iters=10000,
             log_interval=50,
             save_interval=50,
+            plot_interval=50,
             jitter=0.0,
             validation_fraction=0.1,
-            patience=50):
+            patience=50,
+            l2norm=0.0):
+        """
+
+        Args:
+            samples:
+            max_iters:
+            log_interval:
+            save_interval:
+            plot_interval:
+            jitter:
+            validation_fraction:
+            patience:
+            l2norm:
+        """
 
         start_time = time.time()
 
@@ -184,7 +202,7 @@ class Trainer(object):
 
             self.total_iters += 1
 
-            train_loss = self._train(epoch, train_loader, jitter=training_jitter)
+            train_loss = self._train(epoch, train_loader, jitter=training_jitter, l2norm=l2norm)
             validation_loss = self._validate(epoch, valid_loader)
 
             if validation_loss < best_validation_loss:
@@ -204,6 +222,7 @@ class Trainer(object):
                         self.netG.state_dict(),
                         os.path.join(self.path, 'models', 'netG.pt')
                     )
+                if epoch % plot_interval == 0:
                     self._train_plot(samples)
 
             counter += 1
@@ -245,7 +264,7 @@ class Trainer(object):
         return torch.stack([torch.log(torch.abs(torch.det(J[i, :, :])))
                             for i in range(x.shape[0])])
 
-    def _train(self, epoch, loader, jitter=0.0):
+    def _train(self, epoch, loader, jitter=0.0, l2norm=0.0):
 
         self.netG.train()
         train_loss = 0
@@ -257,11 +276,10 @@ class Trainer(object):
             self.optimizer.zero_grad()
             loss = -self.netG.log_probs(data).mean()
             train_loss += loss.item()
+            for param in self.netG.parameters():
+                loss += l2norm * (param ** 2).sum()
             loss.backward()
             self.optimizer.step()
-
-        with torch.no_grad():
-            self.netG(loader.dataset.tensors[0].to(data.device))
 
         return train_loss / len(loader.dataset)
 

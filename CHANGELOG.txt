@@ -25,4 +25,4 @@ Changelog
 ~~~~~~~~~~~~~~~~~~
 
 * Added patience parameter to stop training early when validation loss hasn't improved
-* Fix: Dynamical stepsize
+* Fix: dynamical stepsize

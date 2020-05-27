@@ -67,7 +67,7 @@ class Sampler(object):
             if len(x.shape) == 1:
                 assert x.shape[0] == self.x_dim
                 x = np.expand_dims(x, 0)
-            # Note the flow works in terms of rescaled coordinates. Transform back Do the
+            # Note the flow works in terms of rescaled coordinates. Transform back to the
             # original co-ordinates here to evaluate the likelihood
             res = loglike(self.transform(x))
             if isinstance(res, tuple):
@@ -84,6 +84,14 @@ class Sampler(object):
             return logl, derived
 
         self.loglike = safe_loglike
+
+        sample_prior = getattr(prior, "sample", None)
+        if callable(sample_prior):
+            self.sample_prior = sample_prior
+        else:
+            self.sample_prior = None
+
+        print(self.sample_prior)
 
         if prior is None:
             self.prior = lambda x: 0

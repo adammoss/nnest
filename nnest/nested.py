@@ -17,6 +17,7 @@ import torch
 import numpy as np
 
 from nnest.mcmc import MCMCSampler
+from nnest.priors import UniformPrior
 
 
 class NestedSampler(MCMCSampler):
@@ -42,26 +43,27 @@ class NestedSampler(MCMCSampler):
                  ):
         """
 
-        :param x_dim:
-        :param loglike:
-        :param transform:
-        :param append_run_num:
-        :param run_num:
-        :param hidden_dim:
-        :param num_slow:
-        :param num_derived:
-        :param batch_size:
-        :param flow:
-        :param num_blocks:
-        :param num_layers:
-        :param log_dir:
-        :param use_gpu:
-        :param base_dist:
-        :param scale:
-        :param num_live_points:
+        Args:
+            x_dim:
+            loglike:
+            transform:
+            append_run_num:
+            run_num:
+            hidden_dim:
+            num_slow:
+            num_derived:
+            batch_size:
+            flow:
+            num_blocks:
+            num_layers:
+            log_dir:
+            use_gpu:
+            base_dist:
+            scale:
+            num_live_points:
         """
 
-        prior = lambda x: -np.inf if np.any(np.abs(x) > 1) else 0
+        prior = UniformPrior(x_dim, -1, 1)
 
         super(NestedSampler, self).__init__(x_dim, loglike, transform=transform, append_run_num=append_run_num,
                                             run_num=run_num, hidden_dim=hidden_dim, num_slow=num_slow,
@@ -432,14 +434,14 @@ class NestedSampler(MCMCSampler):
 
             # Check volume constraint
             rnd_u = torch.rand(log_ratio_1.shape, device=self.trainer.device)
-            ratio = (log_ratio_1).exp().clamp(max=1)
+            ratio = log_ratio_1.exp().clamp(max=1)
             if rnd_u > ratio:
                 continue
 
             logl = self.loglike(x)
             idx = np.where(np.isfinite(logl) & (logl < loglstar))[0]
             log_ratio_1[idx] = -np.inf
-            ratio = (log_ratio_1).exp().clamp(max=1)
+            ratio = log_ratio_1.exp().clamp(max=1)
 
             nc += 1
             if rnd_u < ratio:

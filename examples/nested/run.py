@@ -44,7 +44,7 @@ def main(args):
     log_dir = os.path.join(args.log_dir, args.likelihood)
     log_dir += args.log_suffix
 
-    sampler = NestedSampler(like.x_dim, like.loglike, transform=transform, log_dir=log_dir,
+    sampler = NestedSampler(like.x_dim, like, transform=transform, log_dir=log_dir,
                             num_live_points=args.num_live_points, hidden_dim=args.hidden_dim,
                             num_layers=args.num_layers, num_blocks=args.num_blocks, num_slow=args.num_slow,
                             use_gpu=args.use_gpu, base_dist=base_dist, scale=args.scale, flow=args.flow)
