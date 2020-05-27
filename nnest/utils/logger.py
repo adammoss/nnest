@@ -60,11 +60,12 @@ def make_run_dir(run_dir, run_num=None, append_run_num=True):
             print('Creating directory for new run %s' % run_dir)
             os.makedirs(run_dir)
 
-        os.makedirs(os.path.join(run_dir, 'info'))
-        os.makedirs(os.path.join(run_dir, 'results'))
-        os.makedirs(os.path.join(run_dir, 'chains'))
-        os.makedirs(os.path.join(run_dir, 'checkpoint'))
-        os.makedirs(os.path.join(run_dir, 'plots'))
+        if not os.path.isdir(os.path.join(run_dir, 'info')):
+            os.makedirs(os.path.join(run_dir, 'info'))
+            os.makedirs(os.path.join(run_dir, 'results'))
+            os.makedirs(os.path.join(run_dir, 'chains'))
+            os.makedirs(os.path.join(run_dir, 'checkpoint'))
+            os.makedirs(os.path.join(run_dir, 'plots'))
 
     return {'run_dir': run_dir,
             'info': os.path.join(run_dir, 'info'),

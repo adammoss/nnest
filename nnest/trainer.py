@@ -143,7 +143,7 @@ class Trainer(object):
             jitter=0.0,
             validation_fraction=0.1,
             patience=50,
-            l2norm=0.0):
+            l2_norm=0.0):
         """
 
         Args:
@@ -155,7 +155,7 @@ class Trainer(object):
             jitter:
             validation_fraction:
             patience:
-            l2norm:
+            l2_norm:
         """
 
         start_time = time.time()
@@ -202,7 +202,7 @@ class Trainer(object):
 
             self.total_iters += 1
 
-            train_loss = self._train(epoch, train_loader, jitter=training_jitter, l2norm=l2norm)
+            train_loss = self._train(epoch, train_loader, jitter=training_jitter, l2_norm=l2_norm)
             validation_loss = self._validate(epoch, valid_loader)
 
             if validation_loss < best_validation_loss:
@@ -264,7 +264,7 @@ class Trainer(object):
         return torch.stack([torch.log(torch.abs(torch.det(J[i, :, :])))
                             for i in range(x.shape[0])])
 
-    def _train(self, epoch, loader, jitter=0.0, l2norm=0.0):
+    def _train(self, epoch, loader, jitter=0.0, l2_norm=0.0):
 
         self.netG.train()
         train_loss = 0
@@ -275,9 +275,11 @@ class Trainer(object):
             data = (data + jitter * torch.randn_like(data)).to(self.device)
             self.optimizer.zero_grad()
             loss = -self.netG.log_probs(data).mean()
-            train_loss += loss.item()
+            l2_loss = 0
             for param in self.netG.parameters():
-                loss += l2norm * (param ** 2).sum()
+                l2_loss += (param ** 2).sum()
+            train_loss += loss.item()
+            loss += l2_norm * l2_loss
             loss.backward()
             self.optimizer.step()
 
@@ -302,15 +304,15 @@ class Trainer(object):
 
         self.netG.eval()
         with torch.no_grad():
-            x_synth = self.netG.sample(samples.size).detach().cpu().numpy()
+            x_synth = self.netG.sample(samples.shape[0]).detach().cpu().numpy()
             z = self.get_latent_samples(samples)
             if plot_grid and self.x_dim == 2:
                 grid = []
-                for x in np.linspace(np.min(samples[:, 0]), np.max(samples[:, 0]), 10):
-                    for y in np.linspace(np.min(samples[:, 1]), np.max(samples[:, 1]), 5000):
+                for x in np.linspace(np.min(samples[:, 0]) - 0.1, np.max(samples[:, 0]) + 0.1, 10):
+                    for y in np.linspace(np.min(samples[:, 1]) - 0.1, np.max(samples[:, 1]) + 0.1, 5000):
                         grid.append([x, y])
-                for y in np.linspace(np.min(samples[:, 1]), np.max(samples[:, 1]), 10):
-                    for x in np.linspace(np.min(samples[:, 0]), np.max(samples[:, 0]), 5000):
+                for y in np.linspace(np.min(samples[:, 1]) - 0.1, np.max(samples[:, 1]) + 0.1, 10):
+                    for x in np.linspace(np.min(samples[:, 0]) - 0.1, np.max(samples[:, 0]) + 0.1, 5000):
                         grid.append([x, y])
                 grid = np.array(grid)
                 z_grid = self.get_latent_samples(grid)

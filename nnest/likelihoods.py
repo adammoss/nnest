@@ -5,7 +5,8 @@ import scipy.special
 
 
 class Likelihood(object):
-    nderived = 0
+    num_derived = 0
+    num_evaluations = 0
 
     def __init__(self, x_dim):
         self.x_dim = x_dim
@@ -14,8 +15,10 @@ class Likelihood(object):
         if isinstance(x, list):
             x = np.array(x)
         if len(x.shape) > 1:
+            self.num_evaluations += x.shape[0]
             return np.array([self.loglike(x) for x in x])
         else:
+            self.num_evaluations += 1
             return self.loglike(x)
 
     def loglike(self, x):
@@ -102,18 +105,35 @@ class Eggbox(Likelihood):
 
 class GaussianShell(Likelihood):
 
-    def __init__(self, x_dim, sigma=0.1, rshell=2):
+    def __init__(self, x_dim, sigma=0.1, rshell=2, center=0):
         self.sigma = sigma
         self.rshell = rshell
+        if not hasattr(center, '__len__'):
+            self.center = np.array([center] * x_dim)
+        elif isinstance(center, list):
+            self.center = np.array(center)
+        else:
+            self.center = center
         super(GaussianShell, self).__init__(x_dim)
 
     def loglike(self, x):
-        rad = np.sqrt(np.sum(x ** 2))
+        rad = np.sqrt(np.sum((self.center - x) ** 2))
         return - ((rad - self.rshell) ** 2) / (2 * self.sigma ** 2)
 
     @property
     def max_loglike(self):
-        return self(np.array([self.rshell] + [0] * (self.x_dim - 1)))
+        return self(self.center - np.array([self.rshell] + [0] * (self.x_dim - 1)))
+
+
+class DoubleGaussianShell(Likelihood):
+
+    def __init__(self, x_dim, sigmas=[0.1, 0.1], rshells=[2, 2], centers=[-4, 4]):
+        self.shell1 = GaussianShell(x_dim, sigma=sigmas[0], rshell=rshells[0], center=centers[0])
+        self.shell2 = GaussianShell(x_dim, sigma=sigmas[1], rshell=rshells[1], center=centers[1])
+        super(DoubleGaussianShell, self).__init__(x_dim)
+
+    def loglike(self, x):
+        return np.logaddexp(self.shell1.loglike(x), self.shell2.loglike(x))
 
 
 def log_gaussian_pdf(theta, sigma=1, mu=0, ndim=None):

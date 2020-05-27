@@ -114,7 +114,7 @@ class MCMCSampler(Sampler):
             logl, derived = self.loglike(x)
         else:
             for i in range(max_start_tries):
-                z = torch.randn(num_chains, self.trainer.z_dim, device=self.trainer.device)
+                z = self.trainer.netG.prior.sample((num_chains,)).to(self.trainer.device)
                 z = z.detach()
                 x = self.trainer.get_samples(z)
                 logl, derived = self.loglike(x)
@@ -276,7 +276,7 @@ class MCMCSampler(Sampler):
                             f.write(" ".join(["%.5E" % v for v in derived_samples[ib, i, :]]))
                         f.write("\n")
 
-    def _init_samples(self, num_chains=10, mcmc_steps=500, burn_in=100, propose_scale=0.01, temperature=1.0):
+    def _init_samples(self, num_chains=20, mcmc_steps=50, burn_in=100, propose_scale=0.01, temperature=1.0):
         if self.sample_prior is not None:
             x_current = self.sample_prior(num_chains)
         else:
@@ -297,6 +297,7 @@ class MCMCSampler(Sampler):
             samples.append(copy.copy(x_current))
         samples = np.array(samples)
         samples = samples[burn_in:, :, :]
+        self._chain_stats(np.transpose(np.array(samples), axes=[1, 0, 2]))
         return samples.reshape(samples.shape[0] * samples.shape[1], samples.shape[2])
 
     def _read_samples(self, fileroot, match='', ignore_rows=0.3, thin=1):
@@ -314,9 +315,9 @@ class MCMCSampler(Sampler):
     def run(
             self,
             num_training_examples=1000,
-            bootstrap_mcmc_steps=100,
-            bootstrap_burn_in=20,
-            bootstrap_iters=20,
+            bootstrap_mcmc_steps=500,
+            bootstrap_burn_in=100,
+            bootstrap_iters=5,
             bootstrap_fileroot='',
             bootstrap_match='',
             mcmc_steps=5000,
@@ -327,7 +328,6 @@ class MCMCSampler(Sampler):
             output_interval=100,
             init_samples=None,
             jitter=-1.0,
-            l2norm_decay=0.5,
             max_iters=500):
 
         if step_size == 0.0:
@@ -346,11 +346,12 @@ class MCMCSampler(Sampler):
         else:
             samples = self._init_samples()
 
-        buffer.insert(samples[np.random.choice(samples.shape[0], num_training_examples, replace=False)])
+        if samples.shape[0] > num_training_examples:
+            buffer.insert(samples[np.random.choice(samples.shape[0], num_training_examples, replace=False)])
+        else:
+            buffer.insert(samples)
 
         ncall = 0
-
-        l2norm = 1.0
 
         for it in range(1, bootstrap_iters + 1):
 
@@ -361,8 +362,10 @@ class MCMCSampler(Sampler):
                 samples = self.transform(samples)
                 samples = samples[:, bootstrap_burn_in:, :]
                 samples = samples.reshape((samples.shape[0] * samples.shape[1], samples.shape[2]))
-                buffer.insert(samples[np.random.choice(samples.shape[0], int(samples.shape[0] / 10), replace=False)])
+                samples = samples[::10, :]
+                buffer.insert(samples)
                 ncall += nc
+                self.logger.info('Bootstrap step [%d], ncalls [%d], nsamples [%d] ' % (it, ncall, samples.shape[0]))
 
             training_samples = buffer()[:, :self.x_dim]
             mean = np.mean(training_samples, axis=0)
@@ -370,13 +373,9 @@ class MCMCSampler(Sampler):
             # Normalise samples
             training_samples = (training_samples - mean) / std
             self.transform = lambda x: x * std + mean
-            self.trainer.train(training_samples, jitter=jitter, l2norm=l2norm, max_iters=max_iters)
+            self.trainer.train(training_samples, jitter=0.1, l2_norm=0.0, max_iters=max_iters)
 
-            l2norm *= l2norm_decay
-
-            self.logger.info('Bootstrap step [%d], ncalls [%d] ' % (it, ncall))
-
-        self.trainer.train(training_samples, jitter=jitter)
+        self.trainer.train(training_samples, jitter=0.01)
         samples, latent_samples, derived_samples, likes, scale, nc = self.mcmc_sample(
             mcmc_steps=mcmc_steps, num_chains=num_chains, step_size=step_size,
             out_chain=os.path.join(self.logs['chains'], 'chain'), stats_interval=stats_interval,
