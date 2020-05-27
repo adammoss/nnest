@@ -13,14 +13,13 @@ import os
 import csv
 import json
 import glob
-import torch
 import numpy as np
 
-from nnest.mcmc import MCMCSampler
+from nnest.sampler import Sampler
 from nnest.priors import UniformPrior
 
 
-class NestedSampler(MCMCSampler):
+class NestedSampler(Sampler):
 
     def __init__(self,
                  x_dim,
@@ -101,6 +100,28 @@ class NestedSampler(MCMCSampler):
             num_test_mcmc_samples=0,
             test_mcmc_steps=1000,
             test_mcmc_burn_in=0):
+        """
+
+        Args:
+            method:
+            mcmc_steps:
+            mcmc_burn_in:
+            mcmc_num_chains:
+            max_iters:
+            update_interval:
+            log_interval:
+            dlogz:
+            train_iters:
+            volume_switch:
+            step_size:
+            jitter:
+            num_test_mcmc_samples:
+            test_mcmc_steps:
+            test_mcmc_burn_in:
+
+        Returns:
+
+        """
 
         if update_interval is None:
             update_interval = max(1, round(self.num_live_points))
@@ -231,7 +252,7 @@ class NestedSampler(MCMCSampler):
                     # Test multiple chains from worst point to check mixing
                     init_x = np.concatenate(
                         [active_u[worst:worst + 1, :] for i in range(num_test_mcmc_samples)])
-                    test_samples, _, _, _, _, scale, _ = self.mcmc_sample(
+                    test_samples, _, _, _, _, scale, _ = self._mcmc_sample(
                         init_x=init_x, loglstar=loglstar, mcmc_steps=test_mcmc_steps + test_mcmc_burn_in,
                         step_size=step_size, dynamic_step_size=True)
                     np.save(os.path.join(self.logs['chains'], 'test_samples.npy'), test_samples)
@@ -257,7 +278,7 @@ class NestedSampler(MCMCSampler):
                 else:
 
                     # Rejection sampling using flow
-                    u, logl, nc = self.rejection_sample(loglstar, init_x=active_u)
+                    u, logl, nc = self._rejection_sample(loglstar, init_x=active_u)
 
                 ncs.append(nc)
                 mean_calls = np.mean(ncs[-10:])
@@ -306,7 +327,7 @@ class NestedSampler(MCMCSampler):
                         idx = np.random.randint(
                             low=0, high=self.num_live_points, size=mcmc_num_chains)
                         init_x = active_u[idx, :]
-                        samples, latent_samples, derived_samples, likes, scale, nc = self.mcmc_sample(
+                        samples, latent_samples, derived_samples, likes, scale, nc = self._mcmc_sample(
                             init_x=init_x, loglstar=loglstar, mcmc_steps=mcmc_steps + mcmc_burn_in,
                             step_size=step_size, dynamic_step_size=True)
                         if self.use_mpi:
@@ -395,56 +416,3 @@ class NestedSampler(MCMCSampler):
 
         print("niter: {:d}\n ncall: {:d}\n nsamples: {:d}\n logz: {:6.3f} +/- {:6.3f}\n h: {:6.3f}"
               .format(it + 1, ncall, len(np.array(saved_v)), logz, np.sqrt(h / self.num_live_points), h))
-
-    def rejection_sample(
-            self,
-            loglstar,
-            init_x=None,
-            enlargement_factor=1.3,
-            constant_efficiency_factor=None):
-
-        self.trainer.netG.eval()
-
-        if init_x is not None:
-            z, log_det_J = self.trainer.netG(torch.from_numpy(init_x).float().to(self.trainer.device))
-            # We want max det dx/dz to set envelope for rejection sampling
-            m = torch.max(-log_det_J)
-            z = z.detach().cpu().numpy()
-            r = np.max(np.linalg.norm(z, axis=1))
-        else:
-            r = 1
-
-        if constant_efficiency_factor is not None:
-            enlargement_factor = (1 / constant_efficiency_factor) ** (1 / self.x_dim)
-
-        nc = 0
-        while True:
-            if hasattr(self.trainer.netG.prior, 'usample'):
-                z = self.trainer.netG.prior.usample(sample_shape=(1,)) * enlargement_factor
-            else:
-                z = np.random.randn(self.x_dim)
-                z = enlargement_factor * r * z * np.random.rand() ** (1. / self.x_dim) / np.sqrt(np.sum(z ** 2))
-                z = np.expand_dims(z, 0)
-            x, log_det_J = self.trainer.netG.inverse(torch.from_numpy(z).float().to(self.trainer.device))
-            log_ratio_1 = (log_det_J - m).detach()
-            x = x.detach().cpu().numpy()
-
-            if self.prior(x) < -1e30:
-                continue
-
-            # Check volume constraint
-            rnd_u = torch.rand(log_ratio_1.shape, device=self.trainer.device)
-            ratio = log_ratio_1.exp().clamp(max=1)
-            if rnd_u > ratio:
-                continue
-
-            logl = self.loglike(x)
-            idx = np.where(np.isfinite(logl) & (logl < loglstar))[0]
-            log_ratio_1[idx] = -np.inf
-            ratio = log_ratio_1.exp().clamp(max=1)
-
-            nc += 1
-            if rnd_u < ratio:
-                break
-
-        return x, logl, nc
