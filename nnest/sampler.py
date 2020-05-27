@@ -91,8 +91,6 @@ class Sampler(object):
         else:
             self.sample_prior = None
 
-        print(self.sample_prior)
-
         if prior is None:
             self.prior = lambda x: 0
         else:
