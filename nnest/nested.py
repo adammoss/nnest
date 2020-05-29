@@ -85,7 +85,7 @@ class NestedSampler(Sampler):
 
     def run(
             self,
-            method='rejection_prior',
+            strategy=None,
             mcmc_steps=0,
             mcmc_burn_in=0,
             mcmc_num_chains=10,
@@ -103,7 +103,7 @@ class NestedSampler(Sampler):
         """
 
         Args:
-            method:
+            strategy:
             mcmc_steps:
             mcmc_burn_in:
             mcmc_num_chains:
@@ -122,6 +122,10 @@ class NestedSampler(Sampler):
         Returns:
 
         """
+
+        if strategy is None or len(strategy) == 0:
+            strategy = ['rejection_prior', 'mcmc']
+        expired_strategies = []
 
         if update_interval is None:
             update_interval = max(1, round(self.num_live_points))
@@ -165,7 +169,7 @@ class NestedSampler(Sampler):
                 logvol = data['logvol']
                 ncall = data['ncall']
                 fraction_remain = data['fraction_remain']
-                method = data['method']
+                strategy = data['strategy']
 
             active_u = np.load(os.path.join(self.logs['checkpoint'], 'active_u_%s.npy' % it))
             active_v = self.transform(active_u)
@@ -180,12 +184,12 @@ class NestedSampler(Sampler):
             if self.use_mpi:
                 self.logger.info('Using MPI with rank [%d]' % (self.mpi_rank))
                 if self.mpi_rank == 0:
-                    active_u = 2 * (np.random.uniform(size=(self.num_live_points, self.x_dim)) - 0.5)
+                    active_u = self.sample_prior(self.num_live_points)
                 else:
                     active_u = np.empty((self.num_live_points, self.x_dim), dtype=np.float64)
                 self.comm.Bcast(active_u, root=0)
             else:
-                active_u = 2 * (np.random.uniform(size=(self.num_live_points, self.x_dim)) - 0.5)
+                active_u = self.sample_prior(self.num_live_points)
             active_v = self.transform(active_u)
 
             if self.use_mpi:
@@ -215,7 +219,6 @@ class NestedSampler(Sampler):
 
         first_time = True
         nb = self.mpi_size * mcmc_num_chains
-        rejection_sample = volume_switch < 1
         ncs = []
 
         for it in range(it, max_iters):
@@ -230,7 +233,6 @@ class NestedSampler(Sampler):
             logz = logz_new
 
             # Add worst object to samples.
-
             if self.num_derived > 0:
                 saved_v.append(np.concatenate((active_v[worst], active_derived[worst])))
             else:
@@ -243,9 +245,18 @@ class NestedSampler(Sampler):
             # The new likelihood constraint is that of the worst object.
             loglstar = active_logl[worst]
 
-            # Train flow
-            if (method == 'mcmc' or method == 'rejection_flow') and (first_time or it % update_interval == 0):
+            current_method = ''
+            for method in strategy:
+                if method not in expired_strategies:
+                    current_method = method
+                    break
 
+            def valid_method(method):
+                return method in strategy and method not in expired_strategies
+
+            if not current_method == 'rejection_prior' and (first_time or it % update_interval == 0):
+
+                # Train flow
                 self.trainer.train(active_u, max_iters=train_iters, jitter=jitter)
 
                 if num_test_mcmc_samples > 0:
@@ -259,29 +270,47 @@ class NestedSampler(Sampler):
                     self._chain_stats(test_samples, mean=np.mean(active_u, axis=0), std=np.std(active_u, axis=0))
                 first_time = False
 
-            if method == 'rejection_prior' or method == 'rejection_flow':
+            if current_method == 'rejection_prior' or current_method == 'rejection_flow' or current_method == 'density_flow':
 
-                # Rejection sampling
-
-                nc = 0
-
-                if method == 'rejection_prior':
+                if current_method == 'rejection_prior':
 
                     # Simple rejection sampling over prior
+                    nc = 0
                     while True:
-                        u = 2 * (np.random.uniform(size=(1, self.x_dim)) - 0.5)
+                        u = self.sample_prior(1)
                         logl, der = self.loglike(u)
                         nc += 1
                         if logl > loglstar:
                             break
+                    ncs.append(nc)
+                    mean_calls = np.mean(ncs[-10:]) if len(ncs) > 10 else 0
 
-                else:
+                    if expected_vol < volume_switch >= 0 or \
+                            (volume_switch < 0 and mean_calls > mcmc_steps and valid_method('mcmc')):
+                        self.logger.info('Rejection prior no longer efficient')
+                        expired_strategies.append('rejection_prior')
+
+                elif current_method == 'rejection_flow':
 
                     # Rejection sampling using flow
                     u, logl, nc = self._rejection_sample(loglstar, init_x=active_u)
+                    ncs.append(nc)
+                    mean_calls = np.mean(ncs[-10:]) if len(ncs) > 10 else 0
 
-                ncs.append(nc)
-                mean_calls = np.mean(ncs[-10:])
+                    if mean_calls > mcmc_steps and valid_method('mcmc'):
+                        self.logger.info('Rejection flow no longer efficient')
+                        expired_strategies.append('rejection_flow')
+
+                elif current_method == 'density_flow':
+
+                    # Density sampling
+                    u, logl, der, nc = self._density_sample(loglstar)
+                    ncs.append(nc)
+                    mean_calls = np.mean(ncs[-10:]) if len(ncs) > 10 else 0
+
+                    if mean_calls > mcmc_steps and valid_method('mcmc'):
+                        self.logger.info('Density flow no longer efficient')
+                        expired_strategies.append('density_flow')
 
                 if self.use_mpi:
                     recv_samples = self.comm.gather(u, root=0)
@@ -310,12 +339,7 @@ class NestedSampler(Sampler):
                         'Step [%d] loglstar [%5.4e] max logl [%5.4e] logz [%5.4e] vol [%6.5e] ncalls [%d] mean '
                         'calls [%5.4f]' % (it, loglstar, np.max(active_logl), logz, expected_vol, ncall, mean_calls))
 
-                if expected_vol < volume_switch >= 0 or (volume_switch < 0 and mean_calls > mcmc_steps):
-                    # Switch to MCMC if rejection sampling becomes inefficient
-                    self.logger.info('Switching to MCMC sampling')
-                    method = 'mcmc'
-
-            elif method == 'mcmc':
+            elif current_method == 'mcmc':
 
                 # MCMC sampling
 
@@ -324,8 +348,7 @@ class NestedSampler(Sampler):
                     if nb == self.mpi_size * mcmc_num_chains:
                         # Get a new batch of trial points
                         nb = 0
-                        idx = np.random.randint(
-                            low=0, high=self.num_live_points, size=mcmc_num_chains)
+                        idx = np.random.randint(low=0, high=self.num_live_points, size=mcmc_num_chains)
                         init_x = active_u[idx, :]
                         samples, latent_samples, derived_samples, likes, scale, nc = self._mcmc_sample(
                             init_x=init_x, loglstar=loglstar, mcmc_steps=mcmc_steps + mcmc_burn_in,
@@ -385,7 +408,7 @@ class NestedSampler(Sampler):
                 np.save(os.path.join(self.logs['checkpoint'], 'saved_logwt.npy'), saved_logwt)
                 with open(os.path.join(self.logs['checkpoint'], 'checkpoint_%s.txt' % it), 'w') as f:
                     json.dump({'logz': logz, 'h': h, 'logvol': logvol, 'ncall': ncall,
-                               'fraction_remain': fraction_remain, 'method': method}, f)
+                               'fraction_remain': fraction_remain, 'strategy': strategy}, f)
                 self._save_samples(self.samples, self.loglikes, weights=self.weights)
 
             # Stopping criterion
@@ -405,7 +428,7 @@ class NestedSampler(Sampler):
         self.logz = logz
         self.samples = np.array(saved_v)
         self.weights = np.exp(np.array(saved_logwt) - logz)
-        self.loglikes = -np.array(saved_logl)
+        self.loglikes = np.array(saved_logl)
 
         if self.log:
             with open(os.path.join(self.logs['results'], 'final.csv'), 'w') as f:

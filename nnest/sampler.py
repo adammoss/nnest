@@ -16,7 +16,7 @@ import numpy as np
 from tqdm import tqdm
 
 from nnest.trainer import Trainer
-from nnest.utils.evaluation import acceptance_rate, effective_sample_size, mean_jump_distance
+from nnest.utils.evaluation import acceptance_rate, effective_sample_size, mean_jump_distance, gelman_rubin_diagnostic
 from nnest.utils.logger import create_logger, make_run_dir
 
 
@@ -302,7 +302,7 @@ class Sampler(object):
                                    derived_samples=np.transpose(np.array(derived_samples), axes=[1, 0, 2]))
 
             if stats_interval is not None and it % stats_interval == 0:
-                self._chain_stats(np.transpose(np.array(samples), axes=[1, 0, 2]))
+                self._chain_stats(np.transpose(np.array(self.transform(samples)), axes=[1, 0, 2]), step=it)
 
         # Transpose samples so shape is (chain_num, iteration, dim)
         samples = np.transpose(np.array(samples), axes=[1, 0, 2])
@@ -316,7 +316,7 @@ class Sampler(object):
 
         return samples, latent_samples, derived_samples, likes, scale, ncall
 
-    def _chain_stats(self, samples, mean=None, std=None):
+    def _chain_stats(self, samples, mean=None, std=None, step=None):
         acceptance = acceptance_rate(samples)
         if mean is None:
             mean = np.mean(np.reshape(samples, (-1, samples.shape[2])), axis=0)
@@ -324,9 +324,15 @@ class Sampler(object):
             std = np.std(np.reshape(samples, (-1, samples.shape[2])), axis=0)
         ess = effective_sample_size(samples, mean, std)
         jump_distance = mean_jump_distance(samples)
-        self.logger.info(
-            'Acceptance [%5.4f] min ESS [%5.4f] max ESS [%5.4f] average jump distance [%5.4f]' %
-            (acceptance, np.min(ess), np.max(ess), jump_distance))
+        grd = gelman_rubin_diagnostic(samples)
+        if step is None:
+            self.logger.info(
+                'Acceptance [%5.4f] min ESS [%5.4f] max ESS [%5.4f] average jump [%5.4f]' %
+                (acceptance, np.min(ess), np.max(ess), jump_distance))
+        else:
+            self.logger.info(
+                'Step [%d] acceptance [%5.4f] min ESS [%5.4f] max ESS [%5.4f] average jump [%5.4f]' %
+                (step, acceptance, np.min(ess), np.max(ess), jump_distance))
         return acceptance, ess, jump_distance
 
     def _save_samples(self, samples, loglikes, weights=None, derived_samples=None, min_weight=1e-30, outfile='chain'):
@@ -398,7 +404,7 @@ class Sampler(object):
             if rnd_u > ratio:
                 continue
 
-            logl = self.loglike(x)
+            logl, derived = self.loglike(x)
             idx = np.where(np.isfinite(logl) & (logl < loglstar))[0]
             log_ratio_1[idx] = -np.inf
             ratio = log_ratio_1.exp().clamp(max=1)
@@ -407,4 +413,27 @@ class Sampler(object):
             if rnd_u < ratio:
                 break
 
-        return x, logl, nc
+        return x, logl, derived, nc
+
+    def _density_sample(
+            self,
+            loglstar):
+
+        self.trainer.netG.eval()
+
+        nc = 0
+        while True:
+            z = self.trainer.netG.prior.sample((1,)).to(self.trainer.device)
+            z = z.detach()
+            try:
+                x = self.trainer.get_samples(z)
+            except:
+                continue
+            if self.prior(x) < -1e30:
+                continue
+            logl, derived = self.loglike(x)
+            nc += 1
+            if logl[0] > loglstar:
+                break
+
+        return x, logl, derived, nc
