@@ -8,3 +8,4 @@ tqdm
 scikit-learn
 pillow
 tensorboard >= 1.14
+pytest

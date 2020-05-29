@@ -8,29 +8,36 @@ sys.path.append(os.getcwd())
 def main(args):
     from nnest import MCMCSampler
     from nnest.likelihoods import Himmelblau, Rosenbrock, Gaussian, Eggbox, GaussianShell, GaussianMix
+    from nnest.priors import UniformPrior
 
     if args.likelihood.lower() == 'himmelblau':
         like = Himmelblau(args.x_dim)
+        prior = UniformPrior(args.x_dim, -5, 5)
     elif args.likelihood.lower() == 'rosenbrock':
         like = Rosenbrock(args.x_dim)
+        prior = UniformPrior(args.x_dim, -2, 5)
     elif args.likelihood.lower() == 'gaussian':
         like = Gaussian(args.x_dim, args.corr)
+        prior = UniformPrior(args.x_dim, -5, 5)
     elif args.likelihood.lower() == 'eggbox':
         like = Eggbox(args.x_dim)
+        prior = UniformPrior(args.x_dim, -15, 15)
     elif args.likelihood.lower() == 'shell':
         like = GaussianShell(args.x_dim)
+        prior = UniformPrior(args.x_dim, -3, 3)
     elif args.likelihood.lower() == 'mixture':
         like = GaussianMix(args.x_dim)
+        prior = UniformPrior(args.x_dim, -8, 8)
     else:
         raise ValueError('Likelihood not found')
 
     log_dir = os.path.join(args.log_dir, args.likelihood)
     log_dir += args.log_suffix
 
-    sampler = MCMCSampler(like.x_dim, like.loglike, log_dir=args.log_dir, hidden_dim=args.hidden_dim,
+    sampler = MCMCSampler(like.x_dim, like.loglike, prior=prior, log_dir=args.log_dir, hidden_dim=args.hidden_dim,
                           num_layers=args.num_layers, num_blocks=args.num_blocks, num_slow=args.num_slow,
                           use_gpu=args.use_gpu, flow=args.flow)
-    sampler.run(train_iters=args.train_iters, mcmc_steps=args.mcmc_steps, single_thin=10)
+    sampler.run(train_iters=args.train_iters, mcmc_steps=args.mcmc_steps)
 
 
 if __name__ == '__main__':

@@ -35,10 +35,11 @@ class NestedSampler(Sampler):
                  num_blocks=3,
                  num_layers=1,
                  log_dir='logs/test',
-                 use_gpu=False,
                  base_dist=None,
                  scale='',
-                 num_live_points=1000
+                 use_gpu=False,
+                 trainer=None,
+                 num_live_points=1000,
                  ):
         """
 
@@ -56,9 +57,10 @@ class NestedSampler(Sampler):
             num_blocks:
             num_layers:
             log_dir:
-            use_gpu:
             base_dist:
             scale:
+            use_gpu:
+            trainer:
             num_live_points:
         """
 
@@ -68,8 +70,8 @@ class NestedSampler(Sampler):
                                             run_num=run_num, hidden_dim=hidden_dim, num_slow=num_slow,
                                             num_derived=num_derived, batch_size=batch_size, flow=flow,
                                             num_blocks=num_blocks, num_layers=num_layers, log_dir=log_dir,
-                                            use_gpu=use_gpu, base_dist=base_dist, scale=scale, prior=prior,
-                                            transform_prior=False)
+                                            use_gpu=use_gpu, base_dist=base_dist, scale=scale, trainer=trainer,
+                                            prior=prior, transform_prior=False)
 
         self.num_live_points = num_live_points
         self.sampler = 'nested'
@@ -314,23 +316,23 @@ class NestedSampler(Sampler):
 
                 if self.use_mpi:
                     recv_samples = self.comm.gather(u, root=0)
-                    recv_likes = self.comm.gather(logl, root=0)
+                    recv_loglikes = self.comm.gather(logl, root=0)
                     recv_nc = self.comm.gather(nc, root=0)
                     recv_samples = self.comm.bcast(recv_samples, root=0)
-                    recv_likes = self.comm.bcast(recv_likes, root=0)
+                    recv_loglikes = self.comm.bcast(recv_loglikes, root=0)
                     recv_nc = self.comm.bcast(recv_nc, root=0)
                     samples = np.concatenate(recv_samples, axis=0)
-                    likes = np.concatenate(recv_likes, axis=0)
+                    loglikes = np.concatenate(recv_loglikes, axis=0)
                     ncall += sum(recv_nc)
                 else:
                     samples = np.array(u)
                     derived_samples = np.array(der)
-                    likes = np.array(logl)
+                    loglikes = np.array(logl)
                     ncall += nc
                 for ib in range(0, self.mpi_size):
                     active_u[worst] = samples[ib, :]
                     active_v[worst] = self.transform(active_u[worst])
-                    active_logl[worst] = likes[ib]
+                    active_logl[worst] = loglikes[ib]
                     if self.num_derived > 0:
                         active_derived[worst] = derived_samples[ib, :]
 
@@ -350,27 +352,27 @@ class NestedSampler(Sampler):
                         nb = 0
                         idx = np.random.randint(low=0, high=self.num_live_points, size=mcmc_num_chains)
                         init_x = active_u[idx, :]
-                        samples, latent_samples, derived_samples, likes, scale, nc = self._mcmc_sample(
+                        samples, latent_samples, derived_samples, loglikes, scale, nc = self._mcmc_sample(
                             init_x=init_x, loglstar=loglstar, mcmc_steps=mcmc_steps + mcmc_burn_in,
                             step_size=step_size, dynamic_step_size=True)
                         if self.use_mpi:
                             recv_samples = self.comm.gather(samples, root=0)
-                            recv_likes = self.comm.gather(likes, root=0)
+                            recv_loglikes = self.comm.gather(loglikes, root=0)
                             recv_nc = self.comm.gather(nc, root=0)
                             recv_samples = self.comm.bcast(recv_samples, root=0)
-                            recv_likes = self.comm.bcast(recv_likes, root=0)
+                            recv_loglikes = self.comm.bcast(recv_loglikes, root=0)
                             recv_nc = self.comm.bcast(recv_nc, root=0)
                             samples = np.concatenate(recv_samples, axis=0)
-                            likes = np.concatenate(recv_likes, axis=0)
+                            loglikes = np.concatenate(recv_loglikes, axis=0)
                             ncall += sum(recv_nc)
                         else:
                             ncall += nc
                     for ib in range(nb, self.mpi_size * mcmc_num_chains):
                         nb += 1
-                        if np.all(samples[ib, 0, :] != samples[ib, -1, :]) and likes[ib, -1] > loglstar:
+                        if np.all(samples[ib, 0, :] != samples[ib, -1, :]) and loglikes[ib, -1] > loglstar:
                             active_u[worst] = samples[ib, -1, :]
                             active_v[worst] = self.transform(active_u[worst])
-                            active_logl[worst] = likes[ib, -1]
+                            active_logl[worst] = loglikes[ib, -1]
                             if self.num_derived > 0:
                                 active_derived[worst] = derived_samples[ib, -1, :]
                             accept = True
@@ -426,6 +428,7 @@ class NestedSampler(Sampler):
             saved_logl.append(active_logl[i])
 
         self.logz = logz
+        self.ncall = ncall
         self.samples = np.array(saved_v)
         self.weights = np.exp(np.array(saved_logwt) - logz)
         self.loglikes = np.array(saved_logl)
@@ -437,5 +440,5 @@ class NestedSampler(Sampler):
                 writer.writerow([it + 1, ncall, logz, np.sqrt(h / self.num_live_points), h])
             self._save_samples(self.samples, self.loglikes, weights=self.weights)
 
-        print("niter: {:d}\n ncall: {:d}\n nsamples: {:d}\n logz: {:6.3f} +/- {:6.3f}\n h: {:6.3f}"
-              .format(it + 1, ncall, len(np.array(saved_v)), logz, np.sqrt(h / self.num_live_points), h))
+        self.logger.info("niter: {:d}\n ncall: {:d}\n nsamples: {:d}\n logz: {:6.3f} +/- {:6.3f}\n h: {:6.3f}"
+                         .format(it + 1, ncall, len(np.array(saved_v)), logz, np.sqrt(h / self.num_live_points), h))

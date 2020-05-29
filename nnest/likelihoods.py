@@ -31,7 +31,7 @@ class Likelihood(object):
             x = prior.sample(num_samples)
             loglike = self(x)
             ratio = np.exp(loglike - max_loglike)
-            r = np.random.uniform(low=0, high=1, size=(1000,))
+            r = np.random.uniform(low=0, high=1, size=(num_samples,))
             samples = np.vstack((x[np.where(ratio > r)], samples))
         return samples[0:num_samples]
 
@@ -134,6 +134,11 @@ class DoubleGaussianShell(Likelihood):
 
     def loglike(self, x):
         return np.logaddexp(self.shell1.loglike(x), self.shell2.loglike(x))
+
+    @property
+    def max_loglike(self):
+        # This assumes shell's aren't overlapping
+        return self.shell1.max_loglike
 
 
 def log_gaussian_pdf(theta, sigma=1, mu=0, ndim=None):

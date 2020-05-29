@@ -71,6 +71,8 @@ class NormalizingFlowModel(nn.Module):
     def log_probs(self, inputs):
         u, log_det = self.forward(inputs)
         log_probs = self.prior.log_prob(u)
+        if len(log_probs.shape) > 1:
+            log_probs = log_probs.sum(1)
         return log_probs + log_det
 
     def sample(self, num_samples=None, noise=None):

@@ -184,7 +184,7 @@ class Sampler(object):
         samples = []
         latent_samples = []
         derived_samples = []
-        likes = []
+        loglikes = []
 
         if init_x is not None:
             num_chains = init_x.shape[0]
@@ -208,7 +208,7 @@ class Sampler(object):
         samples.append(x)
         latent_samples.append(z.cpu().numpy())
         derived_samples.append(derived)
-        likes.append(logl)
+        loglikes.append(logl)
 
         iters = tqdm(range(1, mcmc_steps + 1)) if show_progress else range(1, mcmc_steps + 1)
         scale = step_size
@@ -235,7 +235,12 @@ class Sampler(object):
 
             # Jacobian is det d f^{-1} (z)/dz
             x, log_det_J = self.trainer.netG.inverse(z)
-            x_prime, log_det_J_prime = self.trainer.netG.inverse(z_prime)
+            x = x.detach().cpu().numpy()
+            try:
+                x_prime, log_det_J_prime = self.trainer.netG.inverse(z_prime)
+            except RuntimeError:
+                self.logger.error('Could not find inverse', z_prime)
+                continue
             x_prime = x_prime.detach().cpu().numpy()
             log_ratio_1 = (log_det_J_prime - log_det_J).detach()
 
@@ -284,21 +289,20 @@ class Sampler(object):
                 if accept < reject:
                     scale /= np.exp(1. / reject)
 
-            m = mask[:, None].float()
-            z = (z_prime * m + z * (1 - m)).detach()
-            derived = derived_prime * m.cpu().numpy() + derived * (1 - m.cpu().numpy())
+            logl = logl_prime * mask.cpu().numpy() + logl * (1 - mask.cpu().numpy())
+            mask = mask[:, None].float()
+            z = (z_prime * mask + z * (1 - mask)).detach()
+            x = x_prime * mask.cpu().numpy() + x * (1 - mask.cpu().numpy())
+            derived = derived_prime * mask.cpu().numpy() + derived * (1 - mask.cpu().numpy())
 
-            m = mask
-            logl = logl_prime * m.cpu().numpy() + logl * (1 - m.cpu().numpy())
-
-            samples.append(self.trainer.get_samples(z))
+            samples.append(x)
             latent_samples.append(z.cpu().numpy())
             derived_samples.append(derived)
-            likes.append(logl)
+            loglikes.append(logl)
 
             if output_interval is not None and it % output_interval == 0 and out_chain is not None:
                 self._save_samples(np.transpose(np.array(self.transform(samples)), axes=[1, 0, 2]),
-                                   np.transpose(np.array(likes), axes=[1, 0]),
+                                   np.transpose(np.array(loglikes), axes=[1, 0]),
                                    derived_samples=np.transpose(np.array(derived_samples), axes=[1, 0, 2]))
 
             if stats_interval is not None and it % stats_interval == 0:
@@ -308,13 +312,13 @@ class Sampler(object):
         samples = np.transpose(np.array(samples), axes=[1, 0, 2])
         latent_samples = np.transpose(np.array(latent_samples), axes=[1, 0, 2])
         derived_samples = np.transpose(np.array(derived_samples), axes=[1, 0, 2])
-        likes = np.transpose(np.array(likes), axes=[1, 0])
+        loglikes = np.transpose(np.array(loglikes), axes=[1, 0])
 
         if out_chain is not None:
             for ib in range(num_chains):
                 files[ib].close()
 
-        return samples, latent_samples, derived_samples, likes, scale, ncall
+        return samples, latent_samples, derived_samples, loglikes, scale, ncall
 
     def _chain_stats(self, samples, mean=None, std=None, step=None):
         acceptance = acceptance_rate(samples)

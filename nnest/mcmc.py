@@ -20,6 +20,7 @@ import matplotlib
 matplotlib.use('Agg')
 
 from nnest.sampler import Sampler
+from nnest.nested import NestedSampler
 from nnest.utils.buffer import Buffer
 
 
@@ -79,7 +80,8 @@ class MCMCSampler(Sampler):
         self.sampler = 'mcmc'
         self.oversample_rate = oversample_rate if oversample_rate > 0 else self.num_fast / self.x_dim
 
-    def init_samples(self, num_chains=20, steps=50, propose_scale=0.01, temperature=1.0):
+    """
+    def init_samples(self, num_chains=20, mcmc_steps=50, propose_scale=0.01, temperature=1.0, burn_in=50):
         if self.sample_prior is not None:
             x_current = self.sample_prior(num_chains)
         else:
@@ -87,8 +89,8 @@ class MCMCSampler(Sampler):
         loglike_current, _ = self.loglike(x_current)
         loglike_current += self.prior(x_current)
         samples = [copy.copy(x_current)]
-        likes = [copy.copy(loglike_current)]
-        for i in range(steps):
+        loglikes = [copy.copy(loglike_current)]
+        for i in range(burn_in + mcmc_steps):
             x_propose = x_current + propose_scale * np.random.normal(size=(num_chains, self.x_dim))
             loglike_propose, _ = self.loglike(x_propose)
             loglike_propose += self.prior(x_propose)
@@ -99,13 +101,25 @@ class MCMCSampler(Sampler):
             x_current[np.where(ratio > r)] = x_propose[np.where(ratio > r)]
             loglike_current[np.where(ratio > r)] = loglike_propose[np.where(ratio > r)]
             samples.append(copy.copy(x_current))
-            likes.append(copy.copy(loglike_current))
+            loglikes.append(copy.copy(loglike_current))
         samples = np.array(samples)
-        likes = np.array(likes)
+        loglikes = np.array(loglikes)
         samples = np.transpose(np.array(samples), axes=[1, 0, 2])
-        likes = np.transpose(np.array(likes), axes=[1, 0])
+        loglikes = np.transpose(np.array(loglikes), axes=[1, 0])
+        samples = samples[:, burn_in:, :]
+        loglikes = loglikes[:, burn_in:]
         self._chain_stats(samples)
-        return samples, likes
+        return samples, loglikes
+    """
+
+    def init_samples(self):
+        transform = lambda x: 5 * x
+        sampler = NestedSampler(self.x_dim, self.loglike, transform=transform, num_live_points=100*self.x_dim,
+                                trainer=self.trainer)
+        sampler.run(mcmc_steps=self.x_dim)
+        self.logz = sampler.logz
+        mc = MCSamples(samples=sampler.samples, weights=sampler.weights, loglikes=-sampler.loglikes)
+        return mc.makeSingleSamples()
 
     def read_samples(self, fileroot, match='', ignore_rows=0.3, thin=1):
         names = ['p%i' % i for i in range(int(self.num_params))]
@@ -116,8 +130,7 @@ class MCMCSampler(Sampler):
             files = chainFiles(fileroot)
         mc = MCSamples(fileroot, names=names, labels=labels, ignore_rows=ignore_rows)
         mc.readChains(files)
-        samples = mc.makeSingleSamples(single_thin=thin)
-        return samples
+        return mc.makeSingleSamples(single_thin=thin)
 
     def run(
             self,
@@ -145,7 +158,6 @@ class MCMCSampler(Sampler):
             mcmc_steps:
             num_chains:
             step_size:
-            ignore_rows:
             stats_interval:
             output_interval:
             init_samples:
@@ -163,6 +175,9 @@ class MCMCSampler(Sampler):
             self.logger.info('Alpha [%5.4f]' % (step_size))
 
         buffer = Buffer(max_size=buffer_size)
+
+        if init_samples is None:
+            init_samples = self.init_samples()
 
         if init_samples.shape[0] > buffer_size:
             buffer.insert(init_samples[np.random.choice(init_samples.shape[0], buffer_size, replace=False)])
@@ -186,7 +201,7 @@ class MCMCSampler(Sampler):
             self.transform = lambda x: x * std + mean
             self.trainer.train(training_samples, jitter=jitter)
 
-            samples, latent_samples, derived_samples, likes, scale, nc = self._mcmc_sample(
+            samples, latent_samples, derived_samples, loglikes, scale, nc = self._mcmc_sample(
                 mcmc_steps=bootstrap_burn_in + bootstrap_mcmc_steps, num_chains=num_chains,
                 step_size=step_size, stats_interval=bootstrap_mcmc_steps, dynamic_step_size=True)
             samples = self.transform(samples)
@@ -206,7 +221,7 @@ class MCMCSampler(Sampler):
         self.transform = lambda x: x * std + mean
         self.trainer.train(training_samples, jitter=final_jitter)
 
-        samples, latent_samples, derived_samples, likes, scale, nc = self._mcmc_sample(
+        samples, latent_samples, derived_samples, loglikes, scale, nc = self._mcmc_sample(
             mcmc_steps=mcmc_steps, num_chains=num_chains, step_size=step_size,
             out_chain=os.path.join(self.logs['chains'], 'chain'), stats_interval=stats_interval,
             output_interval=output_interval)
@@ -215,6 +230,6 @@ class MCMCSampler(Sampler):
 
         self.samples = samples
         self.latent_samples = latent_samples
-        self.loglikes = likes
+        self.loglikes = loglikes
 
         print("ncall: {:d}\n".format(ncall))
