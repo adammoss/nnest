@@ -38,16 +38,17 @@ class Trainer(object):
                  batch_size=100,
                  flow='spline',
                  scale='',
-                 num_blocks=5,
+                 num_blocks=3,
                  num_layers=2,
                  base_dist=None,
                  train=True,
                  load_model='',
-                 log_dir='logs',
+                 log_dir='logs/test',
                  use_gpu=False,
                  log=True,
                  learning_rate=0.0001,
-                 weight_decay=1e-6
+                 weight_decay=1e-6,
+                 log_level=logging.INFO,
                  ):
         """
 
@@ -68,6 +69,7 @@ class Trainer(object):
             log:
             learning_rate:
             weight_decay:
+            log_level:
         """
 
         self.device = torch.device(
@@ -94,10 +96,11 @@ class Trainer(object):
                                            device=self.device, prior=base_dist)
         elif flow.lower() == 'spline':
             if num_slow > 0:
-                self.netG = FastSlowSpline(num_fast, num_slow, hidden_dim, num_blocks, device=self.device,
-                                           prior=base_dist)
+                self.netG = FastSlowSpline(num_fast, num_slow, hidden_dim, num_blocks, tail_bound=5,
+                                           device=self.device, prior=base_dist)
             else:
-                self.netG = SingleSpeedSpline(x_dim, hidden_dim, num_blocks, device=self.device, prior=base_dist)
+                self.netG = SingleSpeedSpline(x_dim, hidden_dim, num_blocks, tail_bound=5,
+                                              device=self.device, prior=base_dist)
         else:
             raise NotImplementedError
 
@@ -123,7 +126,7 @@ class Trainer(object):
         self.optimizer = torch.optim.Adam(
             self.netG.parameters(), lr=learning_rate, weight_decay=weight_decay)
 
-        self.logger = create_logger(__name__, level=logging.INFO)
+        self.logger = create_logger(__name__, level=log_level)
         self.log = log
 
         if self.path is not None:
@@ -137,9 +140,9 @@ class Trainer(object):
             self,
             samples,
             max_iters=10000,
-            log_interval=50,
-            save_interval=50,
-            plot_interval=50,
+            log_interval=100,
+            save_interval=100,
+            plot_interval=100,
             jitter=0.0,
             validation_fraction=0.1,
             patience=50,
@@ -229,6 +232,11 @@ class Trainer(object):
 
             if counter > patience:
                 self.logger.info('Epoch [%i] ran out of patience' % (epoch))
+                if self.path:
+                    torch.save(
+                        self.netG.state_dict(),
+                        os.path.join(self.path, 'models', 'netG.pt')
+                    )
                 break
 
         self.logger.info('Best epoch [%i] validation loss [%5.4f]' % (best_validation_epoch, best_validation_loss))

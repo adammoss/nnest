@@ -14,6 +14,7 @@ import logging
 import torch
 import numpy as np
 from tqdm import tqdm
+import matplotlib.pyplot as plt
 
 from nnest.trainer import Trainer
 from nnest.utils.evaluation import acceptance_rate, effective_sample_size, mean_jump_distance, gelman_rubin_diagnostic
@@ -28,7 +29,6 @@ class Sampler(object):
                  transform=None,
                  prior=None,
                  append_run_num=True,
-                 run_num=None,
                  hidden_dim=16,
                  num_slow=0,
                  num_derived=0,
@@ -43,6 +43,7 @@ class Sampler(object):
                  scale='',
                  trainer=None,
                  transform_prior=True,
+                 log_level=logging.INFO,
                  ):
 
         self.x_dim = x_dim
@@ -63,8 +64,9 @@ class Sampler(object):
                     assert x.shape[0] == self.x_dim
                     x = np.expand_dims(x, 0)
                 return transform(x)
+
             self.transform = safe_transform
-        
+
         def safe_loglike(x):
             if isinstance(x, list):
                 x = np.array(x)
@@ -108,6 +110,7 @@ class Sampler(object):
                     return np.array([prior(self.transform(x)) for x in x])
                 else:
                     return np.array([prior(x) for x in x])
+
             self.prior = safe_prior
 
         self.use_mpi = False
@@ -128,15 +131,15 @@ class Sampler(object):
         args.update(vars(self))
 
         if self.log:
-            self.logs = make_run_dir(log_dir, run_num, append_run_num=append_run_num)
-            log_dir = self.logs['run_dir']
+            self.logs = make_run_dir(log_dir, append_run_num=append_run_num)
+            self.log_dir = self.logs['run_dir']
             self._save_params(args)
         else:
-            log_dir = None
+            self.log_dir = None
 
         self.resume = resume
 
-        self.logger = create_logger(__name__, level=logging.INFO)
+        self.logger = create_logger(__name__, level=log_level)
 
         if trainer is None:
             self.trainer = Trainer(
@@ -147,7 +150,7 @@ class Sampler(object):
                 flow=flow,
                 num_blocks=num_blocks,
                 num_layers=num_layers,
-                log_dir=log_dir,
+                log_dir=self.log_dir,
                 log=self.log,
                 use_gpu=use_gpu,
                 base_dist=base_dist,
@@ -160,6 +163,9 @@ class Sampler(object):
             self.logger.info('Num derived params [%d]' % (self.num_derived))
             self.logger.info('Total params [%d]' % (self.num_params))
 
+        self.total_accepted = 0
+        self.total_rejected = 0
+
     def _save_params(self, my_dict):
         my_dict = {k: str(v) for k, v in my_dict.items()}
         with open(os.path.join(self.logs['info'], 'params.txt'), 'w') as f:
@@ -167,38 +173,57 @@ class Sampler(object):
 
     def _mcmc_sample(
             self,
-            mcmc_steps=20,
-            step_size=1.0,
+            mcmc_steps,
+            step_size=0.0,
             dynamic_step_size=False,
             num_chains=1,
-            init_x=None,
+            init_samples=None,
+            init_loglikes=None,
+            init_derived=None,
             loglstar=None,
             show_progress=False,
             out_chain=None,
             max_start_tries=100,
             output_interval=None,
-            stats_interval=None):
+            stats_interval=None,
+            plot_trace=True):
 
         self.trainer.netG.eval()
+
+        if step_size <= 0.0:
+            step_size = 2 / self.x_dim ** 0.5
 
         samples = []
         latent_samples = []
         derived_samples = []
         loglikes = []
 
-        if init_x is not None:
-            num_chains = init_x.shape[0]
-            z, _ = self.trainer.netG(torch.from_numpy(init_x).float().to(self.trainer.device))
+        iters = tqdm(range(1, mcmc_steps + 1)) if show_progress else range(1, mcmc_steps + 1)
+        scale = step_size
+        accept = 0
+        reject = 0
+        ncall = 0
+
+        if init_samples is not None:
+            num_chains = init_samples.shape[0]
+            z, _ = self.trainer.netG(torch.from_numpy(init_samples).float().to(self.trainer.device))
             z = z.detach()
-            # Add the inverse version of x rather than init_x due to numerical precision
+            # Add the inverse version of x rather than init_samples due to numerical precision
             x = self.trainer.get_samples(z)
-            logl, derived = self.loglike(x)
+            if init_loglikes is None or init_derived is None:
+                logl, derived = self.loglike(x)
+                ncall += num_chains
+            else:
+                logl = init_loglikes
+                derived = init_derived
+            logl_prior = self.prior(x)
         else:
             for i in range(max_start_tries):
                 z = self.trainer.netG.prior.sample((num_chains,)).to(self.trainer.device)
                 z = z.detach()
                 x = self.trainer.get_samples(z)
                 logl, derived = self.loglike(x)
+                ncall += num_chains
                 logl_prior = self.prior(x)
                 if np.all(logl > -1e30) and np.all(logl_prior) > -1e30:
                     break
@@ -210,12 +235,6 @@ class Sampler(object):
         derived_samples.append(derived)
         loglikes.append(logl)
 
-        iters = tqdm(range(1, mcmc_steps + 1)) if show_progress else range(1, mcmc_steps + 1)
-        scale = step_size
-        accept = 0
-        reject = 0
-        ncall = 0
-
         if out_chain is not None:
             if num_chains == 1:
                 files = [open(out_chain + '.txt', 'w')]
@@ -224,76 +243,145 @@ class Sampler(object):
 
         for it in iters:
 
-            # Propose a move in latent space
-            dz = torch.randn_like(z) * scale
-            if self.num_slow > 0 and np.random.uniform() < self.oversample_rate:
-                fast = True
-                dz[:, 0:self.num_slow] = 0.0
-            else:
-                fast = False
-            z_prime = z + dz
+            self.logger.debug('z={}'.format(z))
 
             # Jacobian is det d f^{-1} (z)/dz
             x, log_det_J = self.trainer.netG.inverse(z)
             x = x.detach().cpu().numpy()
-            try:
-                x_prime, log_det_J_prime = self.trainer.netG.inverse(z_prime)
-            except RuntimeError:
-                self.logger.error('Could not find inverse', z_prime)
-                continue
-            x_prime = x_prime.detach().cpu().numpy()
-            log_ratio_1 = (log_det_J_prime - log_det_J).detach()
+            self.logger.debug('x={}'.format(x))
 
-            if self.prior is not None:
-                logl_prior = self.prior(x_prime)
-                log_ratio_1[np.where(logl_prior < -1e30)] = -np.inf
+            if loglstar is not None:
 
-            # Check prior and Jacobian is accepted
-            rnd_u = torch.rand(log_ratio_1.shape, device=self.trainer.device)
-            ratio = log_ratio_1.exp().clamp(max=1)
-            mask = (rnd_u < ratio).int()
-            logl_prime = np.full(num_chains, logl)
-            derived_prime = np.copy(derived)
+                # Sampling from a hard likelihood constraint
+                x_prime = x
+                z_prime = z
 
-            # Only evaluate likelihood if prior and Jacobian is accepted
-            for idx, im in enumerate(mask):
-                if im:
-                    if not fast:
-                        ncall += 1
-                    lp, der = self.loglike(x_prime[idx])
-                    if self.prior is not None:
-                        lp += logl_prior[idx]
-                    if loglstar is not None:
+                # Find a move that satisfies prior and Jacobian
+                for i in range(5):
+
+                    # Propose a move in latent space
+                    dz = torch.randn_like(z) * scale
+                    if self.num_slow > 0 and np.random.uniform() < self.oversample_rate:
+                        fast = True
+                        dz[:, 0:self.num_slow] = 0.0
+                    else:
+                        fast = False
+                    z_propose = z + dz
+
+                    self.logger.debug('z_propose={}'.format(z_propose))
+
+                    try:
+                        x_propose, log_det_J_propose = self.trainer.netG.inverse(z_propose)
+                    except RuntimeError:
+                        self.logger.error('Could not find inverse', z_propose)
+                        continue
+                    x_propose = x_propose.detach().cpu().numpy()
+                    log_ratio = (log_det_J_propose - log_det_J).detach()
+
+                    self.logger.debug('x_propose={}'.format(x_propose))
+
+                    logl_prior = self.prior(x_propose)
+                    log_ratio[np.where(logl_prior < -1e30)] = -np.inf
+
+                    # Check prior and Jacobian is accepted
+                    rnd_u = torch.rand(log_ratio.shape, device=self.trainer.device)
+                    ratio = log_ratio.exp().clamp(max=1)
+                    mask = (rnd_u < ratio).int()
+
+                    self.logger.debug('Mask={}'.format(mask))
+
+                    m = mask[:, None].float()
+                    z_prime = (z_propose * m + z_prime * (1 - m)).detach()
+                    x_prime = x_propose * m.cpu().numpy() + x_prime * (1 - m.cpu().numpy())
+
+                self.logger.debug('z_prime={}'.format(z_prime))
+                self.logger.debug('x_prime={}'.format(x_prime))
+
+                self.logger.debug('Pre-likelihood mask={}'.format(mask))
+
+                logl_prior_prime = self.prior(x_prime)
+                derived_prime = np.copy(derived)
+                # Only evaluate likelihood if prior and Jacobian is accepted
+                logl_prime = np.full(num_chains, logl)
+                for idx, im in enumerate(mask):
+                    if im:
+                        if not fast:
+                            ncall += 1
+                        lp, der = self.loglike(x_prime[idx])
                         if np.isfinite(lp) and lp >= loglstar:
                             logl_prime[idx] = lp
                             derived_prime[idx] = der
                         else:
                             mask[idx] = 0
-                    else:
-                        if lp >= logl[idx]:
-                            logl_prime[idx] = lp
-                        elif rnd_u[idx].cpu().numpy() < np.clip(np.exp(lp - logl[idx]), 0, 1):
-                            logl_prime[idx] = lp
-                            derived_prime[idx] = der
-                        else:
-                            mask[idx] = 0
 
-            if 2 * torch.sum(mask).cpu().numpy() > num_chains:
-                accept += 1
+                self.logger.debug('Post-likelihood mask={}'.format(mask))
+
             else:
-                reject += 1
+
+                # Use likelihood and prior in proposal ratio
+
+                # Propose a move in latent space
+                dz = torch.randn_like(z) * scale
+                if self.num_slow > 0 and np.random.uniform() < self.oversample_rate:
+                    fast = True
+                    dz[:, 0:self.num_slow] = 0.0
+                else:
+                    fast = False
+                z_prime = z + dz
+
+                self.logger.debug('z={}'.format(z))
+                self.logger.debug('z_prime={}'.format(z_prime))
+
+                try:
+                    x_prime, log_det_J_prime = self.trainer.netG.inverse(z_prime)
+                except RuntimeError:
+                    self.logger.error('Could not find inverse', z_prime)
+                    continue
+                x_prime = x_prime.detach().cpu().numpy()
+
+                self.logger.debug('x_prime={}'.format(x_prime))
+
+                logl_prime, derived_prime = self.loglike(x_prime)
+                logl_prior_prime = self.prior(x_prime)
+                log_ratio_1 = (log_det_J_prime - log_det_J).detach()
+                log_ratio_2 = torch.tensor(logl_prime - logl)
+                log_ratio_3 = torch.tensor(logl_prior_prime - logl_prior)
+                log_ratio = log_ratio_1 + log_ratio_2 + log_ratio_3
+
+                self.logger.debug('log ratio 1={}'.format(log_ratio_1))
+                self.logger.debug('log ratio 2={}'.format(log_ratio_2))
+                self.logger.debug('log ratio 3={}'.format(log_ratio_3))
+                self.logger.debug('log ratio={}'.format(log_ratio))
+
+                ncall += num_chains
+                rnd_u = torch.rand(log_ratio.shape, device=self.trainer.device)
+                ratio = log_ratio.exp().clamp(max=1)
+                mask = (rnd_u < ratio).int()
+
+                self.logger.debug('Mask={}'.format(mask))
+
+            num_accepted = torch.sum(mask).cpu().numpy()
+            self.total_accepted += num_accepted
+            self.total_rejected += num_chains - num_accepted
 
             if dynamic_step_size:
+                if 2 * num_accepted > num_chains:
+                    accept += 1
+                else:
+                    reject += 1
                 if accept > reject:
-                    scale *= np.exp(1. / accept)
+                    scale *= np.exp(1. / (1 + accept))
                 if accept < reject:
-                    scale /= np.exp(1. / reject)
+                    scale /= np.exp(1. / (1 + reject))
+                self.logger.debug('scale=%5.4f accept=%d reject=%d' % (scale, accept, reject))
 
             logl = logl_prime * mask.cpu().numpy() + logl * (1 - mask.cpu().numpy())
-            mask = mask[:, None].float()
-            z = (z_prime * mask + z * (1 - mask)).detach()
-            x = x_prime * mask.cpu().numpy() + x * (1 - mask.cpu().numpy())
-            derived = derived_prime * mask.cpu().numpy() + derived * (1 - mask.cpu().numpy())
+            # Avoid multiplying due to -np.inf
+            logl_prior[np.where(mask.cpu().numpy() == 1)] = logl_prior_prime[np.where(mask.cpu().numpy() == 1)]
+            m = mask[:, None].float()
+            z = (z_prime * m + z * (1 - m)).detach()
+            x = x_prime * m.cpu().numpy() + x * (1 - m.cpu().numpy())
+            derived = derived_prime * m.cpu().numpy() + derived * (1 - m.cpu().numpy())
 
             samples.append(x)
             latent_samples.append(z.cpu().numpy())
@@ -318,7 +406,19 @@ class Sampler(object):
             for ib in range(num_chains):
                 files[ib].close()
 
+        if plot_trace:
+            self._plot_trace(samples, latent_samples)
+
         return samples, latent_samples, derived_samples, loglikes, scale, ncall
+
+    def _plot_trace(self, samples, latent_samples):
+        if self.log_dir is not None:
+            fig, ax = plt.subplots(self.x_dim, 2, figsize=(10, self.x_dim))
+            for i in range(self.x_dim):
+                ax[i, 0].plot(samples[0, :, i])
+                ax[i, 1].plot(latent_samples[0, 0:1000, i])
+            plt.savefig(os.path.join(self.log_dir, 'plots', 'trace.png'))
+            plt.close()
 
     def _chain_stats(self, samples, mean=None, std=None, step=None):
         acceptance = acceptance_rate(samples)
@@ -366,78 +466,102 @@ class Sampler(object):
                             f.write(" ".join(["%.5E" % v for v in derived_samples[ib, i, :]]))
                         f.write("\n")
 
-    def _rejection_sample(
+    def _rejection_prior_sample(self, loglstar):
+
+        ncall = 0
+        while True:
+            x = self.sample_prior(1)
+            logl, derived = self.loglike(x)
+            ncall += 1
+            if logl > loglstar:
+                break
+
+        return x, logl, derived, ncall
+
+    def _rejection_flow_sample(
             self,
+            init_samples,
             loglstar,
-            init_x=None,
-            enlargement_factor=1.3,
-            constant_efficiency_factor=None):
+            enlargement_factor=1.1,
+            constant_efficiency_factor=None,
+            cache=False):
 
         self.trainer.netG.eval()
 
-        if init_x is not None:
-            z, log_det_J = self.trainer.netG(torch.from_numpy(init_x).float().to(self.trainer.device))
+        def get_cache():
+            z, log_det_J = self.trainer.netG(torch.from_numpy(init_samples).float().to(self.trainer.device))
             # We want max det dx/dz to set envelope for rejection sampling
-            m = torch.max(-log_det_J)
+            self.max_log_det_J = enlargement_factor * torch.max(-log_det_J)
             z = z.detach().cpu().numpy()
-            r = np.max(np.linalg.norm(z, axis=1))
+            self.max_r = np.max(np.linalg.norm(z, axis=1))
+
+        if not cache:
+            get_cache()
         else:
-            r = 1
+            try:
+                self.max_log_det_J
+            except:
+                get_cache()
 
         if constant_efficiency_factor is not None:
             enlargement_factor = (1 / constant_efficiency_factor) ** (1 / self.x_dim)
 
-        nc = 0
+        ncall = 0
         while True:
             if hasattr(self.trainer.netG.prior, 'usample'):
                 z = self.trainer.netG.prior.usample(sample_shape=(1,)) * enlargement_factor
             else:
                 z = np.random.randn(self.x_dim)
-                z = enlargement_factor * r * z * np.random.rand() ** (1. / self.x_dim) / np.sqrt(np.sum(z ** 2))
+                z = enlargement_factor * self.max_r * z * np.random.rand() ** (1. / self.x_dim) / np.sqrt(
+                    np.sum(z ** 2))
                 z = np.expand_dims(z, 0)
-            x, log_det_J = self.trainer.netG.inverse(torch.from_numpy(z).float().to(self.trainer.device))
-            log_ratio_1 = (log_det_J - m).detach()
-            x = x.detach().cpu().numpy()
+            try:
+                x, log_det_J = self.trainer.netG.inverse(torch.from_numpy(z).float().to(self.trainer.device))
+            except RuntimeError:
+                self.logger.error('Could not find inverse', z)
+                continue
 
+            x = x.detach().cpu().numpy()
             if self.prior(x) < -1e30:
                 continue
 
-            # Check volume constraint
-            rnd_u = torch.rand(log_ratio_1.shape, device=self.trainer.device)
-            ratio = log_ratio_1.exp().clamp(max=1)
+            # Check Jacobian constraint
+            log_ratio = (log_det_J - self.max_log_det_J).detach()
+            rnd_u = torch.rand(log_ratio.shape, device=self.trainer.device)
+            ratio = log_ratio.exp().clamp(max=1)
             if rnd_u > ratio:
                 continue
 
             logl, derived = self.loglike(x)
             idx = np.where(np.isfinite(logl) & (logl < loglstar))[0]
-            log_ratio_1[idx] = -np.inf
-            ratio = log_ratio_1.exp().clamp(max=1)
-
-            nc += 1
+            log_ratio[idx] = -np.inf
+            ratio = log_ratio.exp().clamp(max=1)
+            ncall += 1
             if rnd_u < ratio:
                 break
 
-        return x, logl, derived, nc
+        return x, logl, derived, ncall
 
-    def _density_sample(
-            self,
-            loglstar):
+    def _density_sample(self, loglstar):
 
         self.trainer.netG.eval()
 
-        nc = 0
+        ncall = 0
         while True:
+
             z = self.trainer.netG.prior.sample((1,)).to(self.trainer.device)
             z = z.detach()
             try:
                 x = self.trainer.get_samples(z)
             except:
                 continue
+
             if self.prior(x) < -1e30:
                 continue
+
             logl, derived = self.loglike(x)
-            nc += 1
+            ncall += 1
             if logl[0] > loglstar:
                 break
 
-        return x, logl, derived, nc
+        return x, logl, derived, ncall

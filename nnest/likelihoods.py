@@ -35,6 +35,12 @@ class Likelihood(object):
             samples = np.vstack((x[np.where(ratio > r)], samples))
         return samples[0:num_samples]
 
+    def uniform_sample(self, prior, num_samples, fraction):
+        x = prior.sample(int(num_samples / fraction))
+        loglike = self(x)
+        idx = np.argsort(-loglike)
+        return x[idx[0:num_samples]], loglike[idx[num_samples-1]]
+
     def max_loglike(self):
         raise NotImplementedError
 

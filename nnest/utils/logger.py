@@ -35,7 +35,7 @@ def ensure_directory(path):
             raise
 
 
-def make_run_dir(run_dir, run_num=None, append_run_num=True):
+def make_run_dir(run_dir, append_run_num=True):
     """Generates a new numbered directory for this run to store output"""
 
     if os.path.isdir(os.path.join(run_dir, 'info')):
@@ -50,10 +50,8 @@ def make_run_dir(run_dir, run_num=None, append_run_num=True):
             if e.errno != errno.EEXIST:
                 raise
 
-        if run_num is None or run_num == '':
-            run_num = (sum(os.path.isdir(os.path.join(run_dir, i)) for i in os.listdir(run_dir)) + 1)
-
         if append_run_num:
+            run_num = (sum(os.path.isdir(os.path.join(run_dir, i)) for i in os.listdir(run_dir)) + 1)
             run_dir = os.path.join(run_dir, 'run%s' % run_num)
 
         if not os.path.isdir(run_dir):

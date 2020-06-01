@@ -703,7 +703,7 @@ class ActNorm(AffineConstantFlow):
 
 class SingleSpeedSpline(NormalizingFlowModel):
 
-    def __init__(self, num_inputs, hidden_dim, num_blocks, num_bins=8, tail_bound=3, prior=None, device=None):
+    def __init__(self, num_inputs, hidden_dim, num_blocks, num_bins=8, tail_bound=5, prior=None, device=None):
         flows = [NSF_CL(dim=num_inputs, K=num_bins, B=tail_bound, hidden_dim=hidden_dim) for _ in range(num_blocks)]
         convs = [Invertible1x1Conv(dim=num_inputs) for _ in flows]
         norms = [ActNorm(dim=num_inputs) for _ in flows]
@@ -713,7 +713,7 @@ class SingleSpeedSpline(NormalizingFlowModel):
 
 class FastSlowSpline(FastSlowNormalizingFlowModel):
 
-    def __init__(self, num_fast, num_slow, hidden_dim, num_blocks, num_bins=8, tail_bound=3, prior=None, device=None):
+    def __init__(self, num_fast, num_slow, hidden_dim, num_blocks, num_bins=8, tail_bound=5, prior=None, device=None):
         # Fast block
         fast_flows = [NSF_CL(dim=num_fast, K=num_bins, B=tail_bound, hidden_dim=16) for _ in range(num_blocks)]
         convs = [Invertible1x1Conv(dim=num_fast) for _ in fast_flows]

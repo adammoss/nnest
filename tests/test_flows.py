@@ -8,6 +8,7 @@ from nnest.distributions import GeneralisedNormal
 max_forward_backward_diff = 1.0E-5
 np.random.seed(0)
 
+
 def test_base_dist():
     for dims in [2, 3, 4, 5]:
         base_dists = [

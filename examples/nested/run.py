@@ -48,8 +48,8 @@ def main(args):
                             num_live_points=args.num_live_points, hidden_dim=args.hidden_dim,
                             num_layers=args.num_layers, num_blocks=args.num_blocks, num_slow=args.num_slow,
                             use_gpu=args.use_gpu, base_dist=base_dist, scale=args.scale, flow=args.flow)
-    sampler.run(train_iters=args.train_iters, mcmc_steps=args.mcmc_steps, volume_switch=args.switch, jitter=args.jitter,
-                num_test_mcmc_samples=args.test_samples, test_mcmc_steps=args.test_mcmc_steps)
+    sampler.run(train_iters=args.train_iters, mcmc_steps=args.mcmc_steps, volume_switch=args.switch,
+                jitter=args.jitter)
 
 
 if __name__ == '__main__':
@@ -68,8 +68,6 @@ if __name__ == '__main__':
     parser.add_argument('--flow', type=str, default='spline')
     parser.add_argument('--num_blocks', type=int, default=3)
     parser.add_argument('--jitter', type=float, default=-1)
-    parser.add_argument("--test_samples", type=int, default=0)
-    parser.add_argument("--test_mcmc_steps", type=int, default=1000)
     parser.add_argument('--num_slow', type=int, default=0)
     parser.add_argument('--log_dir', type=str, default='logs')
     parser.add_argument('--likelihood', type=str, default='rosenbrock')
