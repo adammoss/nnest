@@ -18,9 +18,6 @@ from torch.utils.tensorboard import SummaryWriter
 import numpy as np
 from sklearn.model_selection import train_test_split
 import scipy.spatial
-import matplotlib
-
-matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 
 from nnest.networks import SingleSpeedCholeksy, SingleSpeedNVP, FastSlowNVP, SingleSpeedSpline, FastSlowSpline
@@ -316,10 +313,10 @@ class Trainer(object):
             z = self.get_latent_samples(samples)
             if plot_grid and self.x_dim == 2:
                 grid = []
-                for x in np.linspace(np.min(samples[:, 0]) - 0.1, np.max(samples[:, 0]) + 0.1, 10):
+                for x in np.linspace(np.min(samples[:, 0]) - 0.1, np.max(samples[:, 0]) + 0.1, 20):
                     for y in np.linspace(np.min(samples[:, 1]) - 0.1, np.max(samples[:, 1]) + 0.1, 5000):
                         grid.append([x, y])
-                for y in np.linspace(np.min(samples[:, 1]) - 0.1, np.max(samples[:, 1]) + 0.1, 10):
+                for y in np.linspace(np.min(samples[:, 1]) - 0.1, np.max(samples[:, 1]) + 0.1, 20):
                     for x in np.linspace(np.min(samples[:, 0]) - 0.1, np.max(samples[:, 0]) + 0.1, 5000):
                         grid.append([x, y])
                 grid = np.array(grid)

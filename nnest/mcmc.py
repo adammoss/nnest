@@ -15,9 +15,6 @@ import logging
 import numpy as np
 from getdist.mcsamples import MCSamples
 from getdist.chains import chainFiles
-import matplotlib
-
-matplotlib.use('Agg')
 
 from nnest.sampler import Sampler
 from nnest.nested import NestedSampler

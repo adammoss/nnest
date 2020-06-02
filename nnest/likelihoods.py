@@ -143,8 +143,8 @@ class DoubleGaussianShell(Likelihood):
 
     @property
     def max_loglike(self):
-        # This assumes shell's aren't overlapping
-        return self.shell1.max_loglike
+        # This is the worst case scenerio of overlapping shells
+        return self.shell1.max_loglike + self.shell2.max_loglike
 
 
 def log_gaussian_pdf(theta, sigma=1, mu=0, ndim=None):
