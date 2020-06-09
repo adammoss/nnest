@@ -133,13 +133,15 @@ class GaussianShell(Likelihood):
 
 class DoubleGaussianShell(Likelihood):
 
-    def __init__(self, x_dim, sigmas=[0.1, 0.1], rshells=[2, 2], centers=[-4, 4]):
+    def __init__(self, x_dim, sigmas=[0.1, 0.1], rshells=[2, 2], centers=[-4, 4], weights=[1.0, 1.0]):
         self.shell1 = GaussianShell(x_dim, sigma=sigmas[0], rshell=rshells[0], center=centers[0])
         self.shell2 = GaussianShell(x_dim, sigma=sigmas[1], rshell=rshells[1], center=centers[1])
+        self.weights = weights
         super(DoubleGaussianShell, self).__init__(x_dim)
 
     def loglike(self, x):
-        return np.logaddexp(self.shell1.loglike(x), self.shell2.loglike(x))
+        return np.logaddexp(np.log(self.weights[0]) + self.shell1.loglike(x),
+                            np.log(self.weights[1]) + self.shell2.loglike(x))
 
     @property
     def max_loglike(self):

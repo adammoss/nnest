@@ -35,6 +35,7 @@ class NestedSampler(Sampler):
                  flow='spline',
                  num_blocks=3,
                  num_layers=1,
+                 learning_rate=0.001,
                  log_dir='logs/test',
                  resume=True,
                  base_dist=None,
@@ -42,8 +43,7 @@ class NestedSampler(Sampler):
                  use_gpu=False,
                  trainer=None,
                  log_level=logging.INFO,
-                 num_live_points=1000,
-                 ):
+                 num_live_points=1000):
         """
 
         Args:
@@ -58,12 +58,14 @@ class NestedSampler(Sampler):
             flow:
             num_blocks:
             num_layers:
+            learning_rate:
             log_dir:
             resume:
             base_dist:
             scale:
             use_gpu:
             trainer:
+            log_level:
             num_live_points:
         """
 
@@ -72,7 +74,8 @@ class NestedSampler(Sampler):
         super(NestedSampler, self).__init__(x_dim, loglike, transform=transform, append_run_num=append_run_num,
                                             hidden_dim=hidden_dim, num_slow=num_slow, num_derived=num_derived,
                                             batch_size=batch_size, flow=flow, num_blocks=num_blocks,
-                                            num_layers=num_layers, log_dir=log_dir, resume=resume,
+                                            num_layers=num_layers, learning_rate=learning_rate,
+                                            log_dir=log_dir, resume=resume,
                                             use_gpu=use_gpu, base_dist=base_dist, scale=scale, trainer=trainer,
                                             prior=prior, transform_prior=False, log_level=log_level)
 
@@ -121,9 +124,6 @@ class NestedSampler(Sampler):
             jitter:
             rejection_cache_interval:
             rejection_enlargement_factor:
-            num_test_mcmc_samples:
-            test_mcmc_steps:
-            test_mcmc_burn_in:
 
         Returns:
 

@@ -40,6 +40,7 @@ class Sampler(object):
                  flow='spline',
                  num_blocks=3,
                  num_layers=1,
+                 learning_rate=0.001,
                  log_dir='logs/test',
                  resume=True,
                  use_gpu=False,
@@ -154,6 +155,7 @@ class Sampler(object):
                 flow=flow,
                 num_blocks=num_blocks,
                 num_layers=num_layers,
+                learning_rate=learning_rate,
                 log_dir=self.log_dir,
                 log=self.log,
                 use_gpu=use_gpu,
@@ -417,7 +419,7 @@ class Sampler(object):
 
     def _plot_trace(self, samples, latent_samples):
         if self.log_dir is not None:
-            fig, ax = plt.subplots(self.x_dim, 2, figsize=(10, self.x_dim))
+            fig, ax = plt.subplots(self.x_dim, 2, figsize=(10, self.x_dim), sharex=True)
             for i in range(self.x_dim):
                 ax[i, 0].plot(samples[0, :, i])
                 ax[i, 1].plot(latent_samples[0, 0:1000, i])
@@ -570,7 +572,7 @@ class Sampler(object):
 
         return x, logl, derived, ncall
 
-    def _emcee_sample(
+    def _ensemble_sample(
             self,
             mcmc_steps,
             num_walkers,
@@ -600,7 +602,7 @@ class Sampler(object):
                 num_walkers = init_state.shape[0]
                 z, _ = self.trainer.netG(torch.from_numpy(init_state).float().to(self.trainer.device))
                 z = z.detach()
-                state = emcee.State(z)
+                state = emcee.State(z, log_prob=init_loglikes, blobs=init_derived)
             else:
                 state = emcee.State(init_state)
         else:
@@ -621,17 +623,17 @@ class Sampler(object):
                 x, log_det_J = self.trainer.netG.inverse(
                     torch.from_numpy(z.reshape((1, -1))).float().to(self.trainer.device))
             except:
-                return -np.inf
+                return -np.inf, np.zeros((1, self.num_derived))
             x = x.detach().cpu().numpy()
             log_det_J = log_det_J.detach().cpu().numpy()
             logl, der = self.loglike(x)
             if loglstar is not None:
                 if logl < loglstar:
-                    return -np.inf
+                    return -np.inf, der
                 else:
-                    return log_det_J + self.prior(x)
+                    return log_det_J + self.prior(x), der
             else:
-                return logl + log_det_J + self.prior(x)
+                return logl + log_det_J + self.prior(x), np.zeros((1, self.num_derived))
 
         sampler = emcee.EnsembleSampler(num_walkers, self.x_dim, transformed_loglike)
 
@@ -639,6 +641,7 @@ class Sampler(object):
 
             state = sampler.run_mcmc(state, 1)
             z = state.coords
+            derived = state.blobs
 
             ncall += num_walkers
             x, log_det_J = self.trainer.netG.inverse(torch.from_numpy(z).float().to(self.trainer.device))
@@ -650,13 +653,16 @@ class Sampler(object):
 
             samples.append(x)
             latent_samples.append(z)
-            derived_samples.append([])
+            derived_samples.append(derived)
             loglikes.append(state.log_prob)
 
         # Transpose samples so shape is (chain_num, iteration, dim)
         samples = np.transpose(np.array(samples), axes=[1, 0, 2])
         latent_samples = np.transpose(np.array(latent_samples), axes=[1, 0, 2])
-        derived_samples = np.empty((mcmc_steps, num_walkers, 0))
+        derived_samples = np.transpose(np.array(derived_samples), axes=[1, 0, 2])
         loglikes = np.transpose(np.array(loglikes), axes=[1, 0])
+
+        if plot_trace:
+            self._plot_trace(samples, latent_samples)
 
         return samples, latent_samples, derived_samples, loglikes, ncall, state
