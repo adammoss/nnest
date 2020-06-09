@@ -15,6 +15,10 @@ import torch
 import numpy as np
 from tqdm import tqdm
 import matplotlib.pyplot as plt
+try:
+    import emcee
+except:
+    pass
 
 from nnest.trainer import Trainer
 from nnest.utils.evaluation import acceptance_rate, effective_sample_size, mean_jump_distance, gelman_rubin_diagnostic
@@ -565,3 +569,94 @@ class Sampler(object):
                 break
 
         return x, logl, derived, ncall
+
+    def _emcee_sample(
+            self,
+            mcmc_steps,
+            num_walkers,
+            init_state=None,
+            init_loglikes=None,
+            init_derived=None,
+            loglstar=None,
+            show_progress=False,
+            out_chain=None,
+            max_start_tries=100,
+            output_interval=None,
+            stats_interval=None,
+            plot_trace=True):
+
+        self.trainer.netG.eval()
+
+        samples = []
+        latent_samples = []
+        derived_samples = []
+        loglikes = []
+
+        iters = tqdm(range(1, mcmc_steps + 1)) if show_progress else range(1, mcmc_steps + 1)
+        ncall = 0
+
+        if init_state is not None:
+            if isinstance(init_state, np.ndarray):
+                num_walkers = init_state.shape[0]
+                z, _ = self.trainer.netG(torch.from_numpy(init_state).float().to(self.trainer.device))
+                z = z.detach()
+                state = emcee.State(z)
+            else:
+                state = emcee.State(init_state)
+        else:
+            for i in range(max_start_tries):
+                z = self.trainer.netG.prior.sample((num_walkers,)).to(self.trainer.device)
+                z = z.detach()
+                x = self.trainer.get_samples(z)
+                logl_prior = self.prior(x)
+                if np.all(logl_prior) > -1e30:
+                    break
+                if i == max_start_tries - 1:
+                    raise Exception('Could not find starting value')
+            state = emcee.State(z)
+
+        def transformed_loglike(z):
+            assert z.shape == (self.x_dim,), z.shape
+            try:
+                x, log_det_J = self.trainer.netG.inverse(
+                    torch.from_numpy(z.reshape((1, -1))).float().to(self.trainer.device))
+            except:
+                return -np.inf
+            x = x.detach().cpu().numpy()
+            log_det_J = log_det_J.detach().cpu().numpy()
+            logl, der = self.loglike(x)
+            if loglstar is not None:
+                if logl < loglstar:
+                    return -np.inf
+                else:
+                    return log_det_J + self.prior(x)
+            else:
+                return logl + log_det_J + self.prior(x)
+
+        sampler = emcee.EnsembleSampler(num_walkers, self.x_dim, transformed_loglike)
+
+        for it in iters:
+
+            state = sampler.run_mcmc(state, 1)
+            z = state.coords
+
+            ncall += num_walkers
+            x, log_det_J = self.trainer.netG.inverse(torch.from_numpy(z).float().to(self.trainer.device))
+            x = x.detach().cpu().numpy()
+
+            if stats_interval is not None and it % stats_interval == 0:
+                self.logger.info('Step [%d] acceptance [%5.4f] ncalls [%d]'
+                                 % (it, np.mean(sampler.acceptance_fraction), ncall))
+
+            samples.append(x)
+            latent_samples.append(z)
+            derived_samples.append([])
+            loglikes.append(state.log_prob)
+
+        # Transpose samples so shape is (chain_num, iteration, dim)
+        samples = np.transpose(np.array(samples), axes=[1, 0, 2])
+        latent_samples = np.transpose(np.array(latent_samples), axes=[1, 0, 2])
+        derived_samples = np.empty((mcmc_steps, num_walkers, 0))
+        loglikes = np.transpose(np.array(loglikes), axes=[1, 0])
+
+        return samples, latent_samples, derived_samples, loglikes, ncall, state

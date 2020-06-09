@@ -93,10 +93,10 @@ class Trainer(object):
                                            device=self.device, prior=base_dist)
         elif flow.lower() == 'spline':
             if num_slow > 0:
-                self.netG = FastSlowSpline(num_fast, num_slow, hidden_dim, num_blocks, tail_bound=5,
+                self.netG = FastSlowSpline(num_fast, num_slow, hidden_dim, num_blocks, tail_bound=3,
                                            device=self.device, prior=base_dist)
             else:
-                self.netG = SingleSpeedSpline(x_dim, hidden_dim, num_blocks, tail_bound=5,
+                self.netG = SingleSpeedSpline(x_dim, hidden_dim, num_blocks, tail_bound=3,
                                               device=self.device, prior=base_dist)
         else:
             raise NotImplementedError

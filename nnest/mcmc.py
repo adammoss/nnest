@@ -76,14 +76,17 @@ class MCMCSampler(Sampler):
         self.sampler = 'mcmc'
         self.oversample_rate = oversample_rate if oversample_rate > 0 else self.num_fast / self.x_dim
 
-    def init_samples(self):
-        transform = lambda x: 5 * x
-        sampler = NestedSampler(self.x_dim, self.loglike, transform=transform, num_live_points=500,
-                                trainer=self.trainer)
-        sampler.run(strategy=['rejection_prior', 'rejection_flow', 'mcmc'], mcmc_steps=2*self.x_dim)
-        self.logz = sampler.logz
-        mc = MCSamples(samples=sampler.samples, weights=sampler.weights, loglikes=-sampler.loglikes)
-        return mc.makeSingleSamples()
+    def init_samples(self, num_walkers=100):
+        try:
+            import emcee
+        except:
+            raise ImportError
+        def transformed_loglike(x):
+            return self.loglike(x)[0] + self.prior(x)
+        sampler = emcee.EnsembleSampler(num_walkers, self.loglike.x_dim, transformed_loglike)
+        p0 = self.prior.sample(num_walkers)
+        state = sampler.run_mcmc(p0, 1)
+        return state.coords
 
     def read_samples(self, fileroot, match='', ignore_rows=0.3, thin=1):
         names = ['p%i' % i for i in range(int(self.num_params))]
@@ -99,9 +102,10 @@ class MCMCSampler(Sampler):
     def run(
             self,
             mcmc_steps,
+            num_walkers=100,
             init_samples=None,
             buffer_size=1000,
-            bootstrap_mcmc_steps=500,
+            bootstrap_mcmc_steps=20,
             bootstrap_burn_in=100,
             bootstrap_iters=5,
             bootstrap_thin=10,
@@ -133,68 +137,45 @@ class MCMCSampler(Sampler):
 
         """
 
-        if step_size == 0.0:
-            step_size = 1 / self.x_dim ** 0.5
-
-        if self.log:
-            self.logger.info('Alpha [%5.4f]' % (step_size))
-
-        buffer = Buffer(max_size=buffer_size)
-
         if init_samples is None:
-            init_samples = self.init_samples()
-
-        if init_samples.shape[0] > buffer_size:
-            buffer.insert(init_samples[np.random.choice(init_samples.shape[0], buffer_size, replace=False)])
-        else:
-            buffer.insert(init_samples)
-
-        self.logger.info('Using [%d] initial samples' % (len(buffer.data)))
-
-        ncall = 0
-
-        for it in range(1, bootstrap_iters + 1):
-
-            if bootstrap_iters > 1:
-                jitter = initial_jitter + (it - 1) * (final_jitter - initial_jitter) / (bootstrap_iters - 1)
+            if self.sample_prior is not None:
+                init_samples = self.sample_prior(num_walkers)
             else:
-                jitter = initial_jitter
+                raise ValueError('Prior does not have sample method')
 
-            self.logger.info('Bootstrap step [%d]' % (it))
-
-            training_samples = buffer()
-            mean = np.mean(training_samples, axis=0)
-            std = np.std(training_samples, axis=0)
-            # Normalise samples
-            training_samples = (training_samples - mean) / std
-            self.transform = lambda x: x * std + mean
-            self.trainer.train(training_samples, jitter=jitter)
-
-            samples, latent_samples, derived_samples, loglikes, scale, nc = self._mcmc_sample(
-                bootstrap_burn_in + bootstrap_mcmc_steps, num_chains=num_chains,
-                step_size=step_size, stats_interval=bootstrap_mcmc_steps, dynamic_step_size=True)
-            samples = self.transform(samples)
-            samples = samples[:, bootstrap_burn_in:, :]
-            samples = samples.reshape((samples.shape[0] * samples.shape[1], samples.shape[2]))
-            samples = samples[::bootstrap_thin, :]
-            buffer.insert(samples)
-            ncall += nc
-            self.logger.info('Bootstrapping [%d] samples, ncalls [%d] scale [%5.4f]' % (samples.shape[0], ncall, scale))
-
-        training_samples = buffer()
-        mean = np.mean(training_samples, axis=0)
-        std = np.std(training_samples, axis=0)
+        mean = np.mean(init_samples, axis=0)
+        std = np.std(init_samples, axis=0)
         # Normalise samples
-        training_samples = (training_samples - mean) / std
+        training_samples = (init_samples - mean) / std
         self.transform = lambda x: x * std + mean
         self.trainer.train(training_samples, jitter=final_jitter)
 
-        samples, latent_samples, derived_samples, loglikes, scale, nc = self._mcmc_sample(
-            mcmc_steps, num_chains=num_chains, step_size=step_size,
-            out_chain=os.path.join(self.logs['chains'], 'chain'), stats_interval=stats_interval,
-            output_interval=output_interval)
+        state = None
+
+        for it in range(bootstrap_iters):
+
+            samples, latent_samples, derived_samples, loglikes, ncall, state = self._emcee_sample(
+                bootstrap_mcmc_steps, num_walkers, init_state=state, stats_interval=1)
+            self._chain_stats(samples)
+            mc = MCSamples(samples=[samples[i, :, :].squeeze() for i in range(samples.shape[0])],
+                           loglikes=[-loglikes[i, :].squeeze() for i in range(loglikes.shape[0])],
+                           ignore_rows=0.3)
+            single_samples = mc.makeSingleSamples()
+            mean = np.mean(single_samples, axis=0)
+            std = np.std(single_samples, axis=0)
+            # Normalise samples
+            training_samples = (single_samples - mean) / std
+            self.transform = lambda x: x * std + mean
+            self.trainer.train(training_samples, jitter=final_jitter)
+
+            print(samples.shape)
+            state = samples[:, -1, :]
+            state = None
+
+        samples, latent_samples, derived_samples, loglikes, ncall, state = self._emcee_sample(
+            mcmc_steps, num_walkers, init_state=state, stats_interval=1)
+
         samples = self.transform(samples)
-        ncall += nc
 
         self.samples = samples
         self.latent_samples = latent_samples
