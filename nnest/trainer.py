@@ -19,6 +19,7 @@ import numpy as np
 from sklearn.model_selection import train_test_split
 import scipy.spatial
 import matplotlib.pyplot as plt
+from matplotlib import collections as mc
 
 from nnest.networks import SingleSpeedCholeksy, SingleSpeedNVP, FastSlowNVP, SingleSpeedSpline, FastSlowSpline
 from nnest.utils.logger import create_logger
@@ -36,17 +37,15 @@ class Trainer(object):
                  flow='spline',
                  scale='',
                  num_blocks=3,
-                 num_layers=2,
+                 num_layers=1,
                  base_dist=None,
-                 train=True,
                  load_model='',
                  log_dir='logs/test',
                  use_gpu=False,
                  log=True,
                  learning_rate=0.0001,
                  weight_decay=1e-6,
-                 log_level=logging.INFO,
-                 ):
+                 log_level=logging.INFO):
         """
 
         Args:
@@ -59,7 +58,6 @@ class Trainer(object):
             num_blocks:
             num_layers:
             base_dist:
-            train:
             load_model:
             log_dir:
             use_gpu:
@@ -101,7 +99,12 @@ class Trainer(object):
         else:
             raise NotImplementedError
 
-        if train and not load_model:
+        if load_model:
+            self.path = os.path.join(log_dir, load_model)
+            self.netG.load_state_dict(torch.load(
+                os.path.join(self.path, 'models', 'netG.pt')
+            ))
+        else:
             if log_dir is not None:
                 self.path = log_dir
                 if not os.path.exists(os.path.join(self.path, 'models')):
@@ -114,11 +117,6 @@ class Trainer(object):
                     os.makedirs(os.path.join(self.path, 'plots'))
             else:
                 self.path = None
-        else:
-            self.path = os.path.join(log_dir, load_model)
-            self.netG.load_state_dict(torch.load(
-                os.path.join(self.path, 'models', 'netG.pt')
-            ))
 
         self.optimizer = torch.optim.Adam(
             self.netG.parameters(), lr=learning_rate, weight_decay=weight_decay)
@@ -223,7 +221,8 @@ class Trainer(object):
                         os.path.join(self.path, 'models', 'netG.pt')
                     )
                 if epoch % plot_interval == 0:
-                    self._train_plot(samples)
+                    self.plot_latent_samples(
+                        samples, outfile=os.path.join(self.path, 'plots', 'plot_%s.png' % self.total_iters))
 
             counter += 1
 
@@ -236,7 +235,10 @@ class Trainer(object):
                     )
                 break
 
-        self.logger.info('Best epoch [%i] validation loss [%5.4f]' % (best_validation_epoch, best_validation_loss))
+        end_time = time.time()
+
+        self.logger.info('Best epoch [%i] validation loss [%5.4f] train time (s) [%5.4f]]'
+                         % (best_validation_epoch, best_validation_loss, end_time - start_time))
         self.best_validation_epoch = best_validation_epoch
         self.best_validation_loss = best_validation_loss
 
@@ -257,6 +259,87 @@ class Trainer(object):
             x, _ = self.netG.inverse(z)
         x = x.detach().cpu().numpy()
         return x
+
+    def get_synthetic_samples(self, num_samples):
+        return self.netG.sample(num_samples).detach().cpu().numpy()
+
+    def plot_latent_samples(self, samples, outfile=None, plot_synthetic=True):
+
+        self.netG.eval()
+
+        with torch.no_grad():
+            z = self.get_latent_samples(samples)
+            ng = 100
+            xx = np.linspace(np.min(samples[:, 0]) - 1, np.max(samples[:, 0]) + 1, ng)
+            yy = np.linspace(np.min(samples[:, 1]) - 1, np.max(samples[:, 1]) + 1, ng)
+            xv, yv = np.meshgrid(xx, yy)
+            xy = np.stack([xv, yv], axis=-1)
+            xy = xy.reshape((ng * ng, 2))
+            xy = torch.from_numpy(xy.astype(np.float32))
+            z_grid = self.get_latent_samples(xy)
+            if plot_synthetic:
+                fig, ax = plt.subplots(1, 3, figsize=(12, 5))
+            else:
+                fig, ax = plt.subplots(1, 2, figsize=(8, 5))
+            ax[0].tripcolor(xy[:, 0], xy[:, 1], xy[:, 0])
+            ax[0].scatter(samples[:, 0], samples[:, 1], c='r', s=5, alpha=0.5)
+            ax[0].set_title('Real data')
+            ax[0].set_xlim([np.min(samples[:, 0]) - 1, np.max(samples[:, 0]) + 1])
+            ax[0].set_ylim([np.min(samples[:, 1]) - 1, np.max(samples[:, 1]) + 1])
+            ax[1].tripcolor(z_grid[:, 0], z_grid[:, 1], xy[:, 0])
+            ax[1].scatter(z[:, 0], z[:, 1], c='r', s=5, alpha=0.5)
+            ax[1].set_title('Latent data')
+            if plot_synthetic:
+                x = self.get_synthetic_samples(samples.size)
+                ax[2].scatter(x[:, 0], x[:, 1], c='r', s=5, alpha=0.5)
+                ax[2].set_title('Synthetic data')
+            plt.tight_layout()
+            if outfile is not None:
+                plt.savefig(outfile)
+                plt.close()
+            else:
+                plt.show()
+            if self.writer is not None:
+                fig, ax = plt.subplots(2, figsize=(5, 10))
+                ax[0].scatter(samples[:, 0], samples[:, 1], c='r', s=5, alpha=0.5)
+                ax[1].scatter(z[:, 0], z[:, 1], c='r', s=5, alpha=0.5)
+                self.writer.add_figure('latent', fig, self.total_iters)
+
+    def plot_grid_warp(self, samples, outfile=None):
+
+        self.netG.eval()
+
+        with torch.no_grad():
+            plt.figure(figsize=(6, 6))
+            ng = 30
+            xx, yy = np.linspace(-4, 4, ng), np.linspace(-4, 4, ng)
+            xv, yv = np.meshgrid(xx, yy)
+            xy = np.stack([xv, yv], axis=-1)
+            in_circle = np.sqrt((xy ** 2).sum(axis=2)) <= 3
+            xy = xy.reshape((ng * ng, 2))
+            xy = torch.from_numpy(xy.astype(np.float32))
+            xs = self.get_samples(xy)
+            xs = xs.reshape((ng, ng, 2))
+            p1 = np.reshape(xs[1:, :, :], (ng ** 2 - ng, 2))
+            p2 = np.reshape(xs[:-1, :, :], (ng ** 2 - ng, 2))
+            inc = np.reshape(in_circle[1:, :] | in_circle[:-1, :], (ng ** 2 - ng,))
+            p1, p2 = p1[inc], p2[inc]
+            lcy = mc.LineCollection(zip(p1, p2), linewidths=1, alpha=0.5, color='k')
+            p1 = np.reshape(xs[:, 1:, :], (ng ** 2 - ng, 2))
+            p2 = np.reshape(xs[:, :-1, :], (ng ** 2 - ng, 2))
+            inc = np.reshape(in_circle[:, 1:] | in_circle[:, :-1], (ng ** 2 - ng,))
+            p1, p2 = p1[inc], p2[inc]
+            lcx = mc.LineCollection(zip(p1, p2), linewidths=1, alpha=0.5, color='k')
+            plt.gca().add_collection(lcy)
+            plt.gca().add_collection(lcx)
+            plt.xlim([np.min(samples[:, 0]) - 0.05, np.max(samples[:, 0]) + 0.05])
+            plt.ylim([np.min(samples[:, 1]) - 0.05, np.max(samples[:, 1]) + 0.05])
+            plt.scatter(samples[:, 0], samples[:, 1], c='r', s=5, alpha=0.5)
+            if outfile is not None:
+                plt.savefig(outfile)
+                plt.close()
+            else:
+                plt.show()
 
     def _jacobian(self, z):
         """ Calculate det d f^{-1} (z)/dz
@@ -304,44 +387,3 @@ class Trainer(object):
                 val_loss += -self.netG.log_probs(data).mean().item()
 
         return val_loss / len(loader.dataset)
-
-    def _train_plot(self, samples, plot_grid=True):
-
-        self.netG.eval()
-        with torch.no_grad():
-            x_synth = self.netG.sample(samples.shape[0]).detach().cpu().numpy()
-            z = self.get_latent_samples(samples)
-            if plot_grid and self.x_dim == 2:
-                grid = []
-                for x in np.linspace(np.min(samples[:, 0]) - 0.1, np.max(samples[:, 0]) + 0.1, 20):
-                    for y in np.linspace(np.min(samples[:, 1]) - 0.1, np.max(samples[:, 1]) + 0.1, 5000):
-                        grid.append([x, y])
-                for y in np.linspace(np.min(samples[:, 1]) - 0.1, np.max(samples[:, 1]) + 0.1, 20):
-                    for x in np.linspace(np.min(samples[:, 0]) - 0.1, np.max(samples[:, 0]) + 0.1, 5000):
-                        grid.append([x, y])
-                grid = np.array(grid)
-                z_grid = self.get_latent_samples(grid)
-
-        if self.writer is not None:
-            fig, ax = plt.subplots(2, figsize=(5, 10))
-            ax[0].scatter(samples[:, 0], samples[:, 1], c=samples[:, 0], s=4)
-            ax[1].scatter(z[:, 0], z[:, 1], c=samples[:, 0], s=4)
-            self.writer.add_figure('latent', fig, self.total_iters)
-
-        if self.path:
-            fig, ax = plt.subplots(1, 3, figsize=(10, 4))
-            if plot_grid and self.x_dim == 2:
-                ax[0].scatter(grid[:, 0], grid[:, 1], c=grid[:, 0], marker='.', s=1, linewidths=0)
-            ax[0].scatter(samples[:, 0], samples[:, 1], s=4)
-            ax[0].set_title('Real data')
-            if plot_grid and self.x_dim == 2:
-                ax[1].scatter(z_grid[:, 0], z_grid[:, 1], c=grid[:, 0], marker='.', s=1, linewidths=0)
-            ax[1].scatter(z[:, 0], z[:, 1], s=4)
-            ax[1].set_title('Latent data')
-            ax[1].set_xlim([-np.max(np.abs(z)), np.max(np.abs(z))])
-            ax[1].set_ylim([-np.max(np.abs(z)), np.max(np.abs(z))])
-            ax[2].scatter(x_synth[:, 0], x_synth[:, 1], s=2)
-            ax[2].set_title('Synthetic data')
-            plt.tight_layout()
-            plt.savefig(os.path.join(self.path, 'plots', 'plot_%s.png' % self.total_iters))
-            plt.close()
