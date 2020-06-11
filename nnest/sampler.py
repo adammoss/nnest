@@ -1,5 +1,5 @@
 """
-.. module:: mcmc
+.. module:: sampler
    :synopsis: Sampler base class
 .. moduleauthor:: Adam Moss <adam.moss@nottingham.ac.uk>
 """
@@ -81,6 +81,7 @@ class Sampler(object):
             # Note the flow works in terms of rescaled coordinates. Transform back to the
             # original co-ordinates here to evaluate the likelihood
             res = loglike(self.transform(x))
+            self.total_calls += x.shape[0]
             if isinstance(res, tuple):
                 logl, derived = res
             else:
@@ -171,6 +172,8 @@ class Sampler(object):
 
         self.total_accepted = 0
         self.total_rejected = 0
+        self.total_calls = 0
+        self.total_fast_calls = 0
 
     def _save_params(self, my_dict):
         my_dict = {k: str(v) for k, v in my_dict.items()}
@@ -188,7 +191,6 @@ class Sampler(object):
             init_derived=None,
             loglstar=None,
             show_progress=False,
-            out_chain=None,
             max_start_tries=100,
             output_interval=None,
             stats_interval=None,
@@ -238,12 +240,6 @@ class Sampler(object):
         latent_samples.append(z.cpu().numpy())
         derived_samples.append(derived)
         loglikes.append(logl)
-
-        if out_chain is not None:
-            if num_chains == 1:
-                files = [open(out_chain + '.txt', 'w')]
-            else:
-                files = [open(out_chain + '_%s.txt' % (ib + 1), 'w') for ib in range(num_chains)]
 
         for it in iters:
 
@@ -308,8 +304,9 @@ class Sampler(object):
                 logl_prime = np.full(num_chains, logl)
                 for idx, im in enumerate(mask):
                     if im:
-                        if not fast:
-                            ncall += 1
+                        if fast:
+                            self.total_fast_calls += 1
+                        ncall += 1
                         lp, der = self.loglike(x_prime[idx])
                         if np.isfinite(lp) and lp >= loglstar:
                             logl_prime[idx] = lp
@@ -344,6 +341,9 @@ class Sampler(object):
                 x_prime = x_prime.cpu().numpy()
                 self.logger.debug('x_prime={}'.format(x_prime))
 
+                ncall += num_chains
+                if fast:
+                    self.total_fast_calls += num_chains
                 logl_prime, derived_prime = self.loglike(x_prime)
                 logl_prior_prime = self.prior(x_prime)
                 log_ratio_1 = log_det_J_prime - log_det_J
@@ -356,7 +356,6 @@ class Sampler(object):
                 self.logger.debug('log ratio 3={}'.format(log_ratio_3))
                 self.logger.debug('log ratio={}'.format(log_ratio))
 
-                ncall += num_chains
                 rnd_u = torch.rand(log_ratio.shape, device=self.trainer.device)
                 ratio = log_ratio.exp().clamp(max=1)
                 mask = (rnd_u < ratio).int()
@@ -391,7 +390,7 @@ class Sampler(object):
             derived_samples.append(derived)
             loglikes.append(logl)
 
-            if output_interval is not None and it % output_interval == 0 and out_chain is not None:
+            if output_interval is not None and it % output_interval == 0:
                 self._save_samples(np.transpose(np.array(self.transform(samples)), axes=[1, 0, 2]),
                                    np.transpose(np.array(loglikes), axes=[1, 0]),
                                    derived_samples=np.transpose(np.array(derived_samples), axes=[1, 0, 2]))
@@ -404,10 +403,6 @@ class Sampler(object):
         latent_samples = np.transpose(np.array(latent_samples), axes=[1, 0, 2])
         derived_samples = np.transpose(np.array(derived_samples), axes=[1, 0, 2])
         loglikes = np.transpose(np.array(loglikes), axes=[1, 0])
-
-        if out_chain is not None:
-            for ib in range(num_chains):
-                files[ib].close()
 
         if plot_trace:
             self._plot_trace(samples, latent_samples)
@@ -577,11 +572,11 @@ class Sampler(object):
             init_derived=None,
             loglstar=None,
             show_progress=False,
-            out_chain=None,
             max_start_tries=100,
             output_interval=None,
             stats_interval=None,
-            plot_trace=True):
+            plot_trace=True,
+            moves=None):
 
         self.trainer.netG.eval()
 
@@ -625,7 +620,7 @@ class Sampler(object):
             else:
                 return logl + log_det_J + self.prior(x), np.zeros((1, self.num_derived))
 
-        sampler = emcee.EnsembleSampler(num_walkers, self.x_dim, transformed_loglike)
+        sampler = emcee.EnsembleSampler(num_walkers, self.x_dim, transformed_loglike, moves=moves)
 
         ncall = num_walkers if init_loglikes is None else 0
 
@@ -638,14 +633,18 @@ class Sampler(object):
             ncall += num_walkers
             x, log_det_J = self.trainer.inverse(z, to_numpy=True)
 
-            if stats_interval is not None and it % stats_interval == 0:
-                self.logger.info('Step [%d] acceptance [%5.4f] ncalls [%d]'
-                                 % (it, np.mean(sampler.acceptance_fraction), ncall))
+            if stats_interval is not None and it % stats_interval == 0 and it > 1:
+                self._chain_stats(np.transpose(sampler.get_chain(), axes=[1, 0, 2]), step=it)
 
             samples.append(x)
             latent_samples.append(z)
             derived_samples.append(derived)
             loglikes.append(state.log_prob)
+
+            if output_interval is not None and it % output_interval == 0:
+                self._save_samples(np.transpose(np.array(self.transform(samples)), axes=[1, 0, 2]),
+                                   np.transpose(np.array(loglikes), axes=[1, 0]),
+                                   derived_samples=np.transpose(np.array(derived_samples), axes=[1, 0, 2]))
 
         # Transpose samples so shape is (chain_num, iteration, dim)
         samples = np.transpose(np.array(samples), axes=[1, 0, 2])

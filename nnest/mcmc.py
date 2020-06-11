@@ -84,21 +84,36 @@ class MCMCSampler(EnsembleSampler):
             bootstrap_iters=1,
             bootstrap_thin=10,
             stats_interval=100,
-            output_interval=10,
+            output_interval=None,
             initial_jitter=0.01,
             final_jitter=0.01):
+        """
 
-        state, ncall = self.bootstrap(bootstrap_num_walkers, bootstrap_mcmc_steps=bootstrap_mcmc_steps,
-                                      bootstrap_burn_in=bootstrap_burn_in, bootstrap_iters=bootstrap_iters,
-                                      bootstrap_thin=bootstrap_thin, stats_interval=stats_interval,
-                                      output_interval=output_interval, initial_jitter=initial_jitter,
-                                      final_jitter=final_jitter)
+        Args:
+            mcmc_steps:
+            num_chains:
+            bootstrap_num_walkers:
+            bootstrap_mcmc_steps:
+            bootstrap_burn_in:
+            bootstrap_iters:
+            bootstrap_thin:
+            stats_interval:
+            output_interval:
+            initial_jitter:
+            final_jitter:
 
-        samples, latent_samples, derived_samples, loglikes, scale, nc = self._mcmc_sample(
-            mcmc_steps, num_chains=num_chains, stats_interval=stats_interval,
-            output_interval=output_interval)
+        Returns:
 
-        ncall += nc
+        """
+
+        self.bootstrap(bootstrap_num_walkers, bootstrap_mcmc_steps=bootstrap_mcmc_steps,
+                       bootstrap_burn_in=bootstrap_burn_in, bootstrap_iters=bootstrap_iters,
+                       bootstrap_thin=bootstrap_thin, stats_interval=stats_interval,
+                       output_interval=output_interval, initial_jitter=initial_jitter,
+                       final_jitter=final_jitter)
+
+        samples, latent_samples, derived_samples, loglikes, scale, ncall = self._mcmc_sample(
+            mcmc_steps, num_chains=num_chains, stats_interval=stats_interval, output_interval=output_interval)
 
         samples = self.transform(samples)
         if mcmc_steps > 1:
@@ -108,4 +123,4 @@ class MCMCSampler(EnsembleSampler):
         self.latent_samples = latent_samples
         self.loglikes = loglikes
 
-        self.logger.info("ncall: {:d}\n".format(ncall))
+        self.logger.info("ncall: {:d}\n".format(self.total_calls))

@@ -173,7 +173,7 @@ class NestedSampler(Sampler):
                 logz = data['logz']
                 h = data['h']
                 logvol = data['logvol']
-                ncall = data['ncall']
+                self.total_calls = data['ncall']
                 fraction_remain = data['fraction_remain']
                 strategy = data['strategy']
 
@@ -221,7 +221,6 @@ class NestedSampler(Sampler):
             logz = -1e300  # ln(Evidence Z), initially Z=0
             logvol = np.log(1.0 - np.exp(-1.0 / self.num_live_points))
             fraction_remain = 1.0
-            ncall = self.num_live_points  # number of calls we already made
 
         first_time = True
         nb = self.mpi_size * mcmc_num_chains
@@ -311,17 +310,12 @@ class NestedSampler(Sampler):
                     recv_samples = self.comm.gather(samples, root=0)
                     recv_loglikes = self.comm.gather(loglikes, root=0)
                     recv_derived_samples = self.comm.gather(derived_samples, root=0)
-                    recv_nc = self.comm.gather(nc, root=0)
                     recv_samples = self.comm.bcast(recv_samples, root=0)
                     recv_loglikes = self.comm.bcast(recv_loglikes, root=0)
                     recv_derived_samples = self.comm.bcast(recv_derived_samples, root=0)
-                    recv_nc = self.comm.bcast(recv_nc, root=0)
                     samples = np.concatenate(recv_samples, axis=0)
                     loglikes = np.concatenate(recv_loglikes, axis=0)
                     derived_samples = np.concatenate(recv_derived_samples, axis=0)
-                    ncall += sum(recv_nc)
-                else:
-                    ncall += nc
                 for ib in range(0, self.mpi_size):
                     active_u[worst] = samples[ib, :]
                     active_v[worst] = self.transform(active_u[worst])
@@ -332,7 +326,8 @@ class NestedSampler(Sampler):
                 if it % log_interval == 0 and self.log:
                     self.logger.info(
                         'Step [%d] loglstar [%5.4e] max logl [%5.4e] logz [%5.4e] vol [%6.5e] ncalls [%d] mean '
-                        'calls [%5.4f]' % (it, loglstar, np.max(active_logl), logz, expected_vol, ncall, mean_calls))
+                        'calls [%5.4f]' % (it, loglstar, np.max(active_logl), logz, expected_vol, self.total_calls,
+                                           mean_calls))
 
             elif current_method == 'mcmc':
 
@@ -357,17 +352,12 @@ class NestedSampler(Sampler):
                             recv_samples = self.comm.gather(samples, root=0)
                             recv_loglikes = self.comm.gather(loglikes, root=0)
                             recv_derived_samples = self.comm.gather(derived_samples, root=0)
-                            recv_nc = self.comm.gather(nc, root=0)
                             recv_samples = self.comm.bcast(recv_samples, root=0)
                             recv_loglikes = self.comm.bcast(recv_loglikes, root=0)
                             recv_derived_samples = self.comm.bcast(recv_derived_samples, root=0)
-                            recv_nc = self.comm.bcast(recv_nc, root=0)
                             samples = np.concatenate(recv_samples, axis=0)
                             loglikes = np.concatenate(recv_loglikes, axis=0)
                             derived_samples = np.concatenate(recv_derived_samples, axis=0)
-                            ncall += sum(recv_nc)
-                        else:
-                            ncall += nc
                     for ib in range(nb, self.mpi_size * mcmc_num_chains):
                         nb += 1
                         if np.all(samples[ib, 0, :] != samples[ib, -1, :]) and loglikes[ib, -1] > loglstar:
@@ -384,11 +374,12 @@ class NestedSampler(Sampler):
                                                                        std=np.std(active_u, axis=0))
                     self.logger.info(
                         'Step [%d] loglstar [%5.4e] maxlogl [%5.4e] logz [%5.4e] vol [%6.5e] ncalls [%d] '
-                        'scale [%5.4f]' % (it, loglstar, np.max(active_logl), logz, expected_vol, ncall, scale))
+                        'scale [%5.4f]' % (it, loglstar, np.max(active_logl), logz, expected_vol, self.total_calls,
+                                           scale))
                     with open(os.path.join(self.logs['results'], 'results.csv'), 'a') as f:
                         writer = csv.writer(f)
                         writer.writerow([it, acceptance, np.min(ess), np.max(ess),
-                                         jump_distance, scale, loglstar, logz, fraction_remain, ncall])
+                                         jump_distance, scale, loglstar, logz, fraction_remain, self.total_calls])
 
             # Shrink interval
             logvol -= 1.0 / self.num_live_points
@@ -410,7 +401,7 @@ class NestedSampler(Sampler):
                 np.save(os.path.join(self.logs['checkpoint'], 'saved_logl.npy'), saved_logl)
                 np.save(os.path.join(self.logs['checkpoint'], 'saved_logwt.npy'), saved_logwt)
                 with open(os.path.join(self.logs['checkpoint'], 'checkpoint_%s.txt' % it), 'w') as f:
-                    json.dump({'logz': logz, 'h': h, 'logvol': logvol, 'ncall': ncall,
+                    json.dump({'logz': logz, 'h': h, 'logvol': logvol, 'ncall': self.total_calls,
                                'fraction_remain': fraction_remain, 'strategy': strategy}, f)
                 self._save_samples(self.samples, self.loglikes, weights=self.weights)
 
@@ -429,7 +420,6 @@ class NestedSampler(Sampler):
             saved_logl.append(active_logl[i])
 
         self.logz = logz
-        self.ncall = ncall
         self.samples = np.array(saved_v)
         self.weights = np.exp(np.array(saved_logwt) - logz)
         self.loglikes = np.array(saved_logl)
@@ -438,8 +428,9 @@ class NestedSampler(Sampler):
             with open(os.path.join(self.logs['results'], 'final.csv'), 'w') as f:
                 writer = csv.writer(f)
                 writer.writerow(['niter', 'ncall', 'logz', 'logzerr', 'h'])
-                writer.writerow([it + 1, ncall, logz, np.sqrt(h / self.num_live_points), h])
+                writer.writerow([it + 1, self.total_calls, logz, np.sqrt(h / self.num_live_points), h])
             self._save_samples(self.samples, self.loglikes, weights=self.weights)
 
         self.logger.info("niter: {:d}\n ncall: {:d}\n nsamples: {:d}\n logz: {:6.3f} +/- {:6.3f}\n h: {:6.3f}"
-                         .format(it + 1, ncall, len(np.array(saved_v)), logz, np.sqrt(h / self.num_live_points), h))
+                         .format(it + 1, self.total_calls, len(np.array(saved_v)), logz,
+                                 np.sqrt(h / self.num_live_points), h))

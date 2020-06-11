@@ -80,7 +80,7 @@ class EnsembleSampler(Sampler):
             bootstrap_iters=1,
             bootstrap_thin=10,
             stats_interval=10,
-            output_interval=10,
+            output_interval=None,
             initial_jitter=0.01,
             final_jitter=0.01):
         """
@@ -112,11 +112,10 @@ class EnsembleSampler(Sampler):
             import emcee
         except:
             raise ImportError
-        sampler = emcee.EnsembleSampler(num_walkers, self.x_dim, log_prob)
+        sampler = emcee.EnsembleSampler(num_walkers, self.x_dim, log_prob, moves=[(emcee.moves.KDEMove(), 1.0)])
         state = sampler.run_mcmc(x_current, bootstrap_burn_in)
         self.logger.info('Initial acceptance [%5.4f]' % (np.mean(sampler.acceptance_fraction)))
-
-        ncall = bootstrap_burn_in * num_walkers
+        self._chain_stats(np.transpose(sampler.get_chain(), axes=[1, 0, 2]))
 
         # Use state coordinates to train flow
         mean = np.mean(state.coords, axis=0)
@@ -137,15 +136,15 @@ class EnsembleSampler(Sampler):
             else:
                 jitter = initial_jitter
 
-            samples, latent_samples, derived_samples, loglikes, nc = self._ensemble_sample(
+            samples, latent_samples, derived_samples, loglikes, ncall = self._ensemble_sample(
                 bootstrap_burn_in + bootstrap_mcmc_steps, num_walkers, init_samples=init_samples,
-                init_loglikes=init_loglikes, init_derived=init_derived, stats_interval=stats_interval)
-            ncall += nc
+                init_loglikes=init_loglikes, init_derived=init_derived, stats_interval=stats_interval,
+                output_interval=None)
 
             # Remember last position and loglikes
-            #init_samples = samples[:, -1, :]
-            #init_loglikes = loglikes[:, -1]
-            #init_derived = derived_samples[:, -1, :]
+            # init_samples = samples[:, -1, :]
+            # init_loglikes = loglikes[:, -1]
+            # init_derived = derived_samples[:, -1, :]
 
             samples = self.transform(samples)
             self._chain_stats(samples)
@@ -161,8 +160,6 @@ class EnsembleSampler(Sampler):
             self.transform = lambda x: x * std + mean
             self.trainer.train(training_samples, jitter=jitter)
 
-        return state, ncall
-
     def run(
             self,
             mcmc_steps,
@@ -172,7 +169,7 @@ class EnsembleSampler(Sampler):
             bootstrap_iters=1,
             bootstrap_thin=10,
             stats_interval=10,
-            output_interval=10,
+            output_interval=None,
             initial_jitter=0.01,
             final_jitter=0.01):
         """
@@ -193,17 +190,14 @@ class EnsembleSampler(Sampler):
 
         """
 
-        state, ncall = self.bootstrap(num_walkers, bootstrap_mcmc_steps=bootstrap_mcmc_steps,
-                                      bootstrap_burn_in=bootstrap_burn_in, bootstrap_iters=bootstrap_iters,
-                                      bootstrap_thin=bootstrap_thin, stats_interval=stats_interval,
-                                      output_interval=output_interval, initial_jitter=initial_jitter,
-                                      final_jitter=final_jitter)
+        self.bootstrap(num_walkers, bootstrap_mcmc_steps=bootstrap_mcmc_steps,
+                       bootstrap_burn_in=bootstrap_burn_in, bootstrap_iters=bootstrap_iters,
+                       bootstrap_thin=bootstrap_thin, stats_interval=stats_interval,
+                       output_interval=output_interval, initial_jitter=initial_jitter,
+                       final_jitter=final_jitter)
 
-        samples, latent_samples, derived_samples, loglikes, nc = self._ensemble_sample(
-            mcmc_steps, num_walkers, init_samples=state, stats_interval=stats_interval,
-            output_interval=output_interval)
-
-        ncall += nc
+        samples, latent_samples, derived_samples, loglikes, ncall = self._ensemble_sample(
+            mcmc_steps, num_walkers, stats_interval=stats_interval, output_interval=output_interval)
 
         samples = self.transform(samples)
         if mcmc_steps > 1:
@@ -213,4 +207,4 @@ class EnsembleSampler(Sampler):
         self.latent_samples = latent_samples
         self.loglikes = loglikes
 
-        self.logger.info("ncall: {:d}\n".format(ncall))
+        self.logger.info("ncall: {:d}\n".format(self.total_calls))
