@@ -212,10 +212,9 @@ class Sampler(object):
 
         if init_samples is not None:
             num_chains = init_samples.shape[0]
-            z, _ = self.trainer.netG(torch.from_numpy(init_samples).float().to(self.trainer.device))
-            z = z.detach()
+            z, _ = self.trainer.forward(init_samples)
             # Add the inverse version of x rather than init_samples due to numerical precision
-            x = self.trainer.get_samples(z)
+            x = self.trainer.get_samples(z, to_numpy=True)
             if init_loglikes is None or init_derived is None:
                 logl, derived = self.loglike(x)
                 ncall += num_chains
@@ -225,9 +224,8 @@ class Sampler(object):
             logl_prior = self.prior(x)
         else:
             for i in range(max_start_tries):
-                z = self.trainer.netG.prior.sample((num_chains,)).to(self.trainer.device)
-                z = z.detach()
-                x = self.trainer.get_samples(z)
+                z = self.trainer.get_prior_samples(num_chains)
+                x = self.trainer.get_samples(z, to_numpy=True)
                 logl, derived = self.loglike(x)
                 ncall += num_chains
                 logl_prior = self.prior(x)
@@ -251,9 +249,8 @@ class Sampler(object):
 
             self.logger.debug('z={}'.format(z))
 
-            # Jacobian is det d f^{-1} (z)/dz
-            x, log_det_J = self.trainer.netG.inverse(z)
-            x = x.detach().cpu().numpy()
+            x, log_det_J = self.trainer.inverse(z)
+            x = x.cpu().numpy()
             self.logger.debug('x={}'.format(x))
 
             if loglstar is not None:
@@ -277,12 +274,12 @@ class Sampler(object):
                     self.logger.debug('z_propose={}'.format(z_propose))
 
                     try:
-                        x_propose, log_det_J_propose = self.trainer.netG.inverse(z_propose)
-                    except RuntimeError:
-                        self.logger.error('Could not find inverse', z_propose)
+                        x_propose, log_det_J_propose = self.trainer.inverse(z_propose)
+                    except ValueError:
+                        #self.logger.error('Could not find inverse', z_propose)
                         continue
-                    x_propose = x_propose.detach().cpu().numpy()
-                    log_ratio = (log_det_J_propose - log_det_J).detach()
+                    x_propose = x_propose.cpu().numpy()
+                    log_ratio = log_det_J_propose - log_det_J
 
                     self.logger.debug('x_propose={}'.format(x_propose))
 
@@ -339,17 +336,17 @@ class Sampler(object):
                 self.logger.debug('z_prime={}'.format(z_prime))
 
                 try:
-                    x_prime, log_det_J_prime = self.trainer.netG.inverse(z_prime)
-                except RuntimeError:
-                    self.logger.error('Could not find inverse', z_prime)
+                    x_prime, log_det_J_prime = self.trainer.inverse(z_prime)
+                except ValueError:
+                    #self.logger.error('Could not find inverse', z_prime)
                     continue
-                x_prime = x_prime.detach().cpu().numpy()
 
+                x_prime = x_prime.cpu().numpy()
                 self.logger.debug('x_prime={}'.format(x_prime))
 
                 logl_prime, derived_prime = self.loglike(x_prime)
                 logl_prior_prime = self.prior(x_prime)
-                log_ratio_1 = (log_det_J_prime - log_det_J).detach()
+                log_ratio_1 = log_det_J_prime - log_det_J
                 log_ratio_2 = torch.tensor(logl_prime - logl)
                 log_ratio_3 = torch.tensor(logl_prior_prime - logl_prior)
                 log_ratio = log_ratio_1 + log_ratio_2 + log_ratio_3
@@ -495,10 +492,10 @@ class Sampler(object):
         self.trainer.netG.eval()
 
         def get_cache():
-            z, log_det_J = self.trainer.netG(torch.from_numpy(init_samples).float().to(self.trainer.device))
+            z, log_det_J = self.trainer.forward(init_samples)
             # We want max det dx/dz to set envelope for rejection sampling
             self.max_log_det_J = enlargement_factor * torch.max(-log_det_J)
-            z = z.detach().cpu().numpy()
+            z = z.cpu().numpy()
             self.max_r = np.max(np.linalg.norm(z, axis=1))
 
         if not cache:
@@ -522,18 +519,18 @@ class Sampler(object):
                     np.sum(z ** 2))
                 z = np.expand_dims(z, 0)
             try:
-                x, log_det_J = self.trainer.netG.inverse(torch.from_numpy(z).float().to(self.trainer.device))
-            except RuntimeError:
-                self.logger.error('Could not find inverse', z)
+                x, log_det_J = self.trainer.inverse(z)
+            except ValueError:
+                #self.logger.error('Could not find inverse', z)
                 continue
 
-            x = x.detach().cpu().numpy()
+            x = x.cpu().numpy()
             if self.prior(x) < -1e30:
                 continue
 
             # Check Jacobian constraint
-            log_ratio = (log_det_J - self.max_log_det_J).detach()
-            rnd_u = torch.rand(log_ratio.shape, device=self.trainer.device)
+            log_ratio = log_det_J - self.max_log_det_J
+            rnd_u = torch.rand(log_ratio.shape)
             ratio = log_ratio.exp().clamp(max=1)
             if rnd_u > ratio:
                 continue
@@ -555,10 +552,9 @@ class Sampler(object):
         ncall = 0
         while True:
 
-            z = self.trainer.netG.prior.sample((1,)).to(self.trainer.device)
-            z = z.detach()
+            z = self.trainer.get_prior_samples(1)
             try:
-                x = self.trainer.get_samples(z)
+                x = self.trainer.get_samples(z, to_numpy=True)
             except:
                 continue
 
@@ -576,7 +572,7 @@ class Sampler(object):
             self,
             mcmc_steps,
             num_walkers,
-            init_state=None,
+            init_samples=None,
             init_loglikes=None,
             init_derived=None,
             loglstar=None,
@@ -595,21 +591,18 @@ class Sampler(object):
         loglikes = []
 
         iters = tqdm(range(1, mcmc_steps + 1)) if show_progress else range(1, mcmc_steps + 1)
-        ncall = 0
 
-        if init_state is not None:
-            if isinstance(init_state, np.ndarray):
-                num_walkers = init_state.shape[0]
-                z, _ = self.trainer.netG(torch.from_numpy(init_state).float().to(self.trainer.device))
-                z = z.detach()
-                state = emcee.State(z, log_prob=init_loglikes, blobs=init_derived)
+        if init_samples is not None:
+            if isinstance(init_samples, emcee.State):
+                state = emcee.State(init_samples)
             else:
-                state = emcee.State(init_state)
+                num_walkers = init_samples.shape[0]
+                z, _ = self.trainer.forward(init_samples, to_numpy=True)
+                state = emcee.State(z, log_prob=init_loglikes, blobs=init_derived)
         else:
             for i in range(max_start_tries):
-                z = self.trainer.netG.prior.sample((num_walkers,)).to(self.trainer.device)
-                z = z.detach()
-                x = self.trainer.get_samples(z)
+                z = self.trainer.get_prior_samples(num_walkers, to_numpy=True)
+                x = self.trainer.get_samples(z, to_numpy=True)
                 logl_prior = self.prior(x)
                 if np.all(logl_prior) > -1e30:
                     break
@@ -620,12 +613,9 @@ class Sampler(object):
         def transformed_loglike(z):
             assert z.shape == (self.x_dim,), z.shape
             try:
-                x, log_det_J = self.trainer.netG.inverse(
-                    torch.from_numpy(z.reshape((1, -1))).float().to(self.trainer.device))
+                x, log_det_J = self.trainer.inverse(z.reshape((1, -1)), to_numpy=True)
             except:
                 return -np.inf, np.zeros((1, self.num_derived))
-            x = x.detach().cpu().numpy()
-            log_det_J = log_det_J.detach().cpu().numpy()
             logl, der = self.loglike(x)
             if loglstar is not None:
                 if logl < loglstar:
@@ -637,6 +627,8 @@ class Sampler(object):
 
         sampler = emcee.EnsembleSampler(num_walkers, self.x_dim, transformed_loglike)
 
+        ncall = num_walkers if init_loglikes is None else 0
+
         for it in iters:
 
             state = sampler.run_mcmc(state, 1)
@@ -644,8 +636,7 @@ class Sampler(object):
             derived = state.blobs
 
             ncall += num_walkers
-            x, log_det_J = self.trainer.netG.inverse(torch.from_numpy(z).float().to(self.trainer.device))
-            x = x.detach().cpu().numpy()
+            x, log_det_J = self.trainer.inverse(z, to_numpy=True)
 
             if stats_interval is not None and it % stats_interval == 0:
                 self.logger.info('Step [%d] acceptance [%5.4f] ncalls [%d]'
@@ -665,4 +656,4 @@ class Sampler(object):
         if plot_trace:
             self._plot_trace(samples, latent_samples)
 
-        return samples, latent_samples, derived_samples, loglikes, ncall, state
+        return samples, latent_samples, derived_samples, loglikes, ncall

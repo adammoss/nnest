@@ -72,9 +72,8 @@ class EnsembleSampler(Sampler):
 
         self.sampler = 'ensemble'
 
-    def run(
+    def bootstrap(
             self,
-            mcmc_steps,
             num_walkers,
             bootstrap_mcmc_steps=20,
             bootstrap_burn_in=20,
@@ -83,12 +82,10 @@ class EnsembleSampler(Sampler):
             stats_interval=10,
             output_interval=10,
             initial_jitter=0.01,
-            final_jitter=0.01,
-            latent_sample=True):
+            final_jitter=0.01):
         """
 
         Args:
-            mcmc_steps:
             num_walkers:
             bootstrap_mcmc_steps:
             bootstrap_burn_in:
@@ -98,7 +95,6 @@ class EnsembleSampler(Sampler):
             output_interval:
             initial_jitter:
             final_jitter:
-            latent_sample:
 
         Returns:
 
@@ -122,72 +118,99 @@ class EnsembleSampler(Sampler):
 
         ncall = bootstrap_burn_in * num_walkers
 
-        if not latent_sample:
+        # Use state coordinates to train flow
+        mean = np.mean(state.coords, axis=0)
+        std = np.std(state.coords, axis=0)
+        # Normalise samples
+        training_samples = (state.coords - mean) / std
+        self.transform = lambda x: x * std + mean
+        self.trainer.train(training_samples, jitter=initial_jitter)
 
-            sampler.reset()
-            sampler.run_mcmc(state, mcmc_steps)
+        init_samples = None
+        init_loglikes = None
+        init_derived = None
 
-            samples = np.transpose(sampler.get_chain(), axes=[1, 0, 2])
-            derived_samples = np.transpose(sampler.get_blobs(), axes=[1, 0, 2])
-            loglikes = np.transpose(sampler.get_log_prob(), axes=[1, 0])
+        for it in range(1, bootstrap_iters + 1):
 
-            self._chain_stats(samples)
-            self.samples = np.concatenate((samples, derived_samples), axis=2)
-            self.loglikes = loglikes
+            if bootstrap_iters > 1:
+                jitter = initial_jitter + (it - 1) * (final_jitter - initial_jitter) / (bootstrap_iters - 1)
+            else:
+                jitter = initial_jitter
 
-            ncall += mcmc_steps * num_walkers
-
-        else:
-
-            # Use state coordinates to train flow
-            mean = np.mean(state.coords, axis=0)
-            std = np.std(state.coords, axis=0)
-            # Normalise samples
-            training_samples = (state.coords - mean) / std
-            self.transform = lambda x: x * std + mean
-            self.trainer.train(training_samples, jitter=initial_jitter)
-
-            state = None
-
-            for it in range(1, bootstrap_iters + 1):
-
-                if bootstrap_iters > 1:
-                    jitter = initial_jitter + (it - 1) * (final_jitter - initial_jitter) / (bootstrap_iters - 1)
-                else:
-                    jitter = initial_jitter
-
-                samples, latent_samples, derived_samples, loglikes, nc, state = self._ensemble_sample(
-                    bootstrap_burn_in + bootstrap_mcmc_steps, num_walkers, init_state=state,
-                    stats_interval=stats_interval)
-                ncall += nc
-
-                samples = self.transform(samples)
-                self._chain_stats(samples)
-
-                mc = MCSamples(samples=[samples[i, bootstrap_burn_in:, :].squeeze() for i in range(samples.shape[0])],
-                               loglikes=[-loglikes[i, bootstrap_burn_in:].squeeze() for i in range(loglikes.shape[0])])
-                single_samples = mc.makeSingleSamples(single_thin=bootstrap_thin)
-
-                mean = np.mean(single_samples, axis=0)
-                std = np.std(single_samples, axis=0)
-                # Normalise samples
-                training_samples = (single_samples - mean) / std
-                self.transform = lambda x: x * std + mean
-                self.trainer.train(training_samples, jitter=jitter)
-
-                state = samples[:, -1, :]
-                state = None
-
-            samples, latent_samples, derived_samples, loglikes, nc, state = self._ensemble_sample(
-                mcmc_steps, num_walkers, init_state=state, stats_interval=stats_interval,
-                output_interval=output_interval)
+            samples, latent_samples, derived_samples, loglikes, nc = self._ensemble_sample(
+                bootstrap_burn_in + bootstrap_mcmc_steps, num_walkers, init_samples=init_samples,
+                init_loglikes=init_loglikes, init_derived=init_derived, stats_interval=stats_interval)
             ncall += nc
+
+            # Remember last position and loglikes
+            #init_samples = samples[:, -1, :]
+            #init_loglikes = loglikes[:, -1]
+            #init_derived = derived_samples[:, -1, :]
 
             samples = self.transform(samples)
             self._chain_stats(samples)
 
-            self.samples = np.concatenate((samples, derived_samples), axis=2)
-            self.latent_samples = latent_samples
-            self.loglikes = loglikes
+            mc = MCSamples(samples=[samples[i, bootstrap_burn_in:, :].squeeze() for i in range(samples.shape[0])],
+                           loglikes=[-loglikes[i, bootstrap_burn_in:].squeeze() for i in range(loglikes.shape[0])])
+            single_samples = mc.makeSingleSamples(single_thin=bootstrap_thin)
+
+            mean = np.mean(single_samples, axis=0)
+            std = np.std(single_samples, axis=0)
+            # Normalise samples
+            training_samples = (single_samples - mean) / std
+            self.transform = lambda x: x * std + mean
+            self.trainer.train(training_samples, jitter=jitter)
+
+        return state, ncall
+
+    def run(
+            self,
+            mcmc_steps,
+            num_walkers,
+            bootstrap_mcmc_steps=20,
+            bootstrap_burn_in=20,
+            bootstrap_iters=1,
+            bootstrap_thin=10,
+            stats_interval=10,
+            output_interval=10,
+            initial_jitter=0.01,
+            final_jitter=0.01):
+        """
+
+        Args:
+            mcmc_steps:
+            num_walkers:
+            bootstrap_mcmc_steps:
+            bootstrap_burn_in:
+            bootstrap_iters:
+            bootstrap_thin:
+            stats_interval:
+            output_interval:
+            initial_jitter:
+            final_jitter:
+
+        Returns:
+
+        """
+
+        state, ncall = self.bootstrap(num_walkers, bootstrap_mcmc_steps=bootstrap_mcmc_steps,
+                                      bootstrap_burn_in=bootstrap_burn_in, bootstrap_iters=bootstrap_iters,
+                                      bootstrap_thin=bootstrap_thin, stats_interval=stats_interval,
+                                      output_interval=output_interval, initial_jitter=initial_jitter,
+                                      final_jitter=final_jitter)
+
+        samples, latent_samples, derived_samples, loglikes, nc = self._ensemble_sample(
+            mcmc_steps, num_walkers, init_samples=state, stats_interval=stats_interval,
+            output_interval=output_interval)
+
+        ncall += nc
+
+        samples = self.transform(samples)
+        if mcmc_steps > 1:
+            self._chain_stats(samples)
+
+        self.samples = np.concatenate((samples, derived_samples), axis=2)
+        self.latent_samples = latent_samples
+        self.loglikes = loglikes
 
         self.logger.info("ncall: {:d}\n".format(ncall))

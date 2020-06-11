@@ -137,7 +137,6 @@ class Trainer(object):
             max_iters=10000,
             log_interval=100,
             save_interval=100,
-            plot_interval=100,
             jitter=0.0,
             validation_fraction=0.1,
             patience=50,
@@ -220,9 +219,6 @@ class Trainer(object):
                         self.netG.state_dict(),
                         os.path.join(self.path, 'models', 'netG.pt')
                     )
-                if epoch % plot_interval == 0:
-                    self.plot_latent_samples(
-                        samples, outfile=os.path.join(self.path, 'plots', 'plot_%s.png' % self.total_iters))
 
             counter += 1
 
@@ -244,53 +240,122 @@ class Trainer(object):
 
         self.netG.load_state_dict(best_model.state_dict())
 
-    def get_latent_samples(self, x):
+        if self.path:
+            self.plot_samples(
+                samples, outfile=os.path.join(self.path, 'plots', 'plot_%s.png' % self.total_iters))
+
+    def forward(self, x, to_numpy=False):
         if type(x) is np.ndarray:
-            z, _ = self.netG.forward(torch.from_numpy(x).float().to(self.device))
+            z, log_det_J = self.netG.forward(torch.from_numpy(x).float().to(self.device))
         else:
-            z, _ = self.netG.forward(x)
-        z = z.detach().cpu().numpy()
+            z, log_det_J = self.netG.forward(x)
+        z = z.detach()
+        log_det_J = log_det_J.detach()
+        if to_numpy:
+            z = z.cpu().numpy()
+            log_det_J = log_det_J.cpu().numpy()
+        return z, log_det_J
+
+    def inverse(self, z, to_numpy=False):
+        if type(z) is np.ndarray:
+            x, log_det_J = self.netG.inverse(torch.from_numpy(z).float().to(self.device))
+        else:
+            x, log_det_J = self.netG.inverse(z)
+        x = x.detach()
+        log_det_J = log_det_J.detach()
+        if to_numpy:
+            x = x.cpu().numpy()
+            log_det_J = log_det_J.cpu().numpy()
+        return x, log_det_J
+
+    def get_prior_samples(self, num_samples, to_numpy=False):
+        z = self.netG.prior.sample((num_samples,)).to(self.device)
+        z = z.detach()
+        if to_numpy:
+            z = z.cpu().numpy()
         return z
 
-    def get_samples(self, z):
-        if type(z) is np.ndarray:
-            x, _ = self.netG.inverse(torch.from_numpy(z).float().to(self.device))
-        else:
-            x, _ = self.netG.inverse(z)
-        x = x.detach().cpu().numpy()
+    def get_latent_samples(self, x, to_numpy=False):
+        z, _ = self.forward(x, to_numpy=to_numpy)
+        return z
+
+    def get_samples(self, z, to_numpy=False):
+        x, _ = self.inverse(z, to_numpy=to_numpy)
         return x
 
-    def get_synthetic_samples(self, num_samples):
-        return self.netG.sample(num_samples).detach().cpu().numpy()
+    def get_synthetic_samples(self, num_samples, to_numpy=False):
+        x = self.netG.sample(num_samples)
+        x = x.detach()
+        if to_numpy:
+            x = x.cpu().numpy()
+        return x
 
-    def plot_latent_samples(self, samples, outfile=None, plot_synthetic=True):
+    def log_probs(self, x, to_numpy=False):
+        if type(x) is np.ndarray:
+            log_probs = self.netG.log_probs(torch.from_numpy(x).float().to(self.device))
+        else:
+            log_probs = self.netG.log_probs(x)
+        log_probs = log_probs.detach()
+        if to_numpy:
+            log_probs = log_probs.cpu().numpy()
+        return log_probs
+
+    def plot_samples(self, samples, outfile=None, plot_synthetic=True):
 
         self.netG.eval()
 
         with torch.no_grad():
-            z = self.get_latent_samples(samples)
-            ng = 100
-            xx = np.linspace(np.min(samples[:, 0]) - 1, np.max(samples[:, 0]) + 1, ng)
-            yy = np.linspace(np.min(samples[:, 1]) - 1, np.max(samples[:, 1]) + 1, ng)
-            xv, yv = np.meshgrid(xx, yy)
-            xy = np.stack([xv, yv], axis=-1)
-            xy = xy.reshape((ng * ng, 2))
-            xy = torch.from_numpy(xy.astype(np.float32))
-            z_grid = self.get_latent_samples(xy)
             if plot_synthetic:
                 fig, ax = plt.subplots(1, 3, figsize=(12, 5))
             else:
-                fig, ax = plt.subplots(1, 2, figsize=(8, 5))
-            ax[0].tripcolor(xy[:, 0], xy[:, 1], xy[:, 0])
+                fig, ax = plt.subplots(1, 2, figsize=(9, 5))
             ax[0].scatter(samples[:, 0], samples[:, 1], c='r', s=5, alpha=0.5)
             ax[0].set_title('Real data')
-            ax[0].set_xlim([np.min(samples[:, 0]) - 1, np.max(samples[:, 0]) + 1])
-            ax[0].set_ylim([np.min(samples[:, 1]) - 1, np.max(samples[:, 1]) + 1])
-            ax[1].tripcolor(z_grid[:, 0], z_grid[:, 1], xy[:, 0])
+            ax[0].set_xlim([np.min(samples[:, 0]) - 0.1, np.max(samples[:, 0]) + 0.1])
+            ax[0].set_ylim([np.min(samples[:, 1]) - 0.1, np.max(samples[:, 1]) + 0.1])
+            if self.x_dim == 2:
+                ng = 30
+                xx = np.linspace(-3, 3, ng)
+                yy = np.linspace(-3, 3, ng)
+                xv, yv = np.meshgrid(xx, yy)
+                xy = np.stack([xv, yv], axis=-1)
+                xy = xy.reshape((ng * ng, 2))
+                xy = torch.from_numpy(xy.astype(np.float32))
+                xs = self.get_samples(xy, to_numpy=True)
+                xs = xs.reshape((ng, ng, 2))
+                p1 = np.reshape(xs[1:, :, :], (ng ** 2 - ng, 2))
+                p2 = np.reshape(xs[:-1, :, :], (ng ** 2 - ng, 2))
+                lcy = mc.LineCollection(zip(p1, p2), linewidths=1, alpha=0.2, color='k')
+                p1 = np.reshape(xs[:, 1:, :], (ng ** 2 - ng, 2))
+                p2 = np.reshape(xs[:, :-1, :], (ng ** 2 - ng, 2))
+                lcx = mc.LineCollection(zip(p1, p2), linewidths=1, alpha=0.2, color='k')
+                ax[0].add_collection(lcy)
+                ax[0].add_collection(lcx)
+            z = self.get_latent_samples(samples, to_numpy=True)
             ax[1].scatter(z[:, 0], z[:, 1], c='r', s=5, alpha=0.5)
             ax[1].set_title('Latent data')
+            ax[1].set_xlim([np.min(z[:, 0]) - 0.1, np.max(z[:, 0]) + 0.1])
+            ax[1].set_ylim([np.min(z[:, 1]) - 0.1, np.max(z[:, 1]) + 0.1])
+            if self.x_dim == 2:
+                ng = 30
+                xx = np.linspace(np.min(samples[:, 0]) - 0.1, np.max(samples[:, 0] + 0.1), ng)
+                yy = np.linspace(np.min(samples[:, 1]) - 0.1, np.max(samples[:, 1] + 0.1), ng)
+                xv, yv = np.meshgrid(xx, yy)
+                xy = np.stack([xv, yv], axis=-1)
+                xy = xy.reshape((ng * ng, 2))
+                xy = torch.from_numpy(xy.astype(np.float32))
+                xs = self.get_latent_samples(xy, to_numpy=True)
+                xs = xs.reshape((ng, ng, 2))
+                p1 = np.reshape(xs[1:, :, :], (ng ** 2 - ng, 2))
+                p2 = np.reshape(xs[:-1, :, :], (ng ** 2 - ng, 2))
+                lcy = mc.LineCollection(zip(p1, p2), linewidths=1, alpha=0.2, color='k')
+                p1 = np.reshape(xs[:, 1:, :], (ng ** 2 - ng, 2))
+                p2 = np.reshape(xs[:, :-1, :], (ng ** 2 - ng, 2))
+                lcx = mc.LineCollection(zip(p1, p2), linewidths=1, alpha=0.2, color='k')
+                ax[1].add_collection(lcy)
+                ax[1].add_collection(lcx)
             if plot_synthetic:
-                x = self.get_synthetic_samples(samples.size)
+                x = self.get_synthetic_samples(samples.size, to_numpy=True)
                 ax[2].scatter(x[:, 0], x[:, 1], c='r', s=5, alpha=0.5)
                 ax[2].set_title('Synthetic data')
             plt.tight_layout()
@@ -304,42 +369,6 @@ class Trainer(object):
                 ax[0].scatter(samples[:, 0], samples[:, 1], c='r', s=5, alpha=0.5)
                 ax[1].scatter(z[:, 0], z[:, 1], c='r', s=5, alpha=0.5)
                 self.writer.add_figure('latent', fig, self.total_iters)
-
-    def plot_grid_warp(self, samples, outfile=None):
-
-        self.netG.eval()
-
-        with torch.no_grad():
-            plt.figure(figsize=(6, 6))
-            ng = 30
-            xx, yy = np.linspace(-4, 4, ng), np.linspace(-4, 4, ng)
-            xv, yv = np.meshgrid(xx, yy)
-            xy = np.stack([xv, yv], axis=-1)
-            in_circle = np.sqrt((xy ** 2).sum(axis=2)) <= 3
-            xy = xy.reshape((ng * ng, 2))
-            xy = torch.from_numpy(xy.astype(np.float32))
-            xs = self.get_samples(xy)
-            xs = xs.reshape((ng, ng, 2))
-            p1 = np.reshape(xs[1:, :, :], (ng ** 2 - ng, 2))
-            p2 = np.reshape(xs[:-1, :, :], (ng ** 2 - ng, 2))
-            inc = np.reshape(in_circle[1:, :] | in_circle[:-1, :], (ng ** 2 - ng,))
-            p1, p2 = p1[inc], p2[inc]
-            lcy = mc.LineCollection(zip(p1, p2), linewidths=1, alpha=0.5, color='k')
-            p1 = np.reshape(xs[:, 1:, :], (ng ** 2 - ng, 2))
-            p2 = np.reshape(xs[:, :-1, :], (ng ** 2 - ng, 2))
-            inc = np.reshape(in_circle[:, 1:] | in_circle[:, :-1], (ng ** 2 - ng,))
-            p1, p2 = p1[inc], p2[inc]
-            lcx = mc.LineCollection(zip(p1, p2), linewidths=1, alpha=0.5, color='k')
-            plt.gca().add_collection(lcy)
-            plt.gca().add_collection(lcx)
-            plt.xlim([np.min(samples[:, 0]) - 0.05, np.max(samples[:, 0]) + 0.05])
-            plt.ylim([np.min(samples[:, 1]) - 0.05, np.max(samples[:, 1]) + 0.05])
-            plt.scatter(samples[:, 0], samples[:, 1], c='r', s=5, alpha=0.5)
-            if outfile is not None:
-                plt.savefig(outfile)
-                plt.close()
-            else:
-                plt.show()
 
     def _jacobian(self, z):
         """ Calculate det d f^{-1} (z)/dz

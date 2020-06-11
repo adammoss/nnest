@@ -11,12 +11,11 @@ from __future__ import division
 import logging
 
 import numpy as np
-from getdist.mcsamples import MCSamples
 
-from nnest.sampler import Sampler
+from nnest.ensemble import EnsembleSampler
 
 
-class MCMCSampler(Sampler):
+class MCMCSampler(EnsembleSampler):
 
     def __init__(self,
                  x_dim,
@@ -75,6 +74,38 @@ class MCMCSampler(Sampler):
         self.sampler = 'mcmc'
         self.oversample_rate = oversample_rate if oversample_rate > 0 else self.num_fast / self.x_dim
 
-    def run(self):
+    def run(
+            self,
+            mcmc_steps,
+            num_chains,
+            bootstrap_num_walkers=100,
+            bootstrap_mcmc_steps=20,
+            bootstrap_burn_in=20,
+            bootstrap_iters=1,
+            bootstrap_thin=10,
+            stats_interval=100,
+            output_interval=10,
+            initial_jitter=0.01,
+            final_jitter=0.01):
 
-        pass
+        state, ncall = self.bootstrap(bootstrap_num_walkers, bootstrap_mcmc_steps=bootstrap_mcmc_steps,
+                                      bootstrap_burn_in=bootstrap_burn_in, bootstrap_iters=bootstrap_iters,
+                                      bootstrap_thin=bootstrap_thin, stats_interval=stats_interval,
+                                      output_interval=output_interval, initial_jitter=initial_jitter,
+                                      final_jitter=final_jitter)
+
+        samples, latent_samples, derived_samples, loglikes, scale, nc = self._mcmc_sample(
+            mcmc_steps, num_chains=num_chains, stats_interval=stats_interval,
+            output_interval=output_interval)
+
+        ncall += nc
+
+        samples = self.transform(samples)
+        if mcmc_steps > 1:
+            self._chain_stats(samples)
+
+        self.samples = np.concatenate((samples, derived_samples), axis=2)
+        self.latent_samples = latent_samples
+        self.loglikes = loglikes
+
+        self.logger.info("ncall: {:d}\n".format(ncall))
