@@ -633,9 +633,6 @@ class Sampler(object):
             ncall += num_walkers
             x, log_det_J = self.trainer.inverse(z, to_numpy=True)
 
-            if stats_interval is not None and it % stats_interval == 0 and it > 1:
-                self._chain_stats(np.transpose(sampler.get_chain(), axes=[1, 0, 2]), step=it)
-
             samples.append(x)
             latent_samples.append(z)
             derived_samples.append(derived)
@@ -645,6 +642,9 @@ class Sampler(object):
                 self._save_samples(np.transpose(np.array(self.transform(samples)), axes=[1, 0, 2]),
                                    np.transpose(np.array(loglikes), axes=[1, 0]),
                                    derived_samples=np.transpose(np.array(derived_samples), axes=[1, 0, 2]))
+
+            if stats_interval is not None and it % stats_interval == 0 and it > 1:
+                self._chain_stats(np.transpose(np.array(self.transform(samples)), axes=[1, 0, 2]), step=it)
 
         # Transpose samples so shape is (chain_num, iteration, dim)
         samples = np.transpose(np.array(samples), axes=[1, 0, 2])
