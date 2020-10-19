@@ -131,12 +131,12 @@ class Sampler(object):
             self.mpi_size = 1
             self.mpi_rank = 0
 
-        self.log = not self.use_mpi or (self.use_mpi and self.mpi_rank == 0)
+        self.single_or_primary_process = not self.use_mpi or (self.use_mpi and self.mpi_rank == 0)
 
         args = locals()
         args.update(vars(self))
 
-        if self.log:
+        if self.single_or_primary_process:
             self.logs = make_run_dir(log_dir, append_run_num=append_run_num)
             self.log_dir = self.logs['run_dir']
             self._save_params(args)
@@ -158,14 +158,14 @@ class Sampler(object):
                 num_layers=num_layers,
                 learning_rate=learning_rate,
                 log_dir=self.log_dir,
-                log=self.log,
+                log=self.single_or_primary_process,
                 use_gpu=use_gpu,
                 base_dist=base_dist,
                 scale=scale)
         else:
             self.trainer = trainer
 
-        if self.log:
+        if self.single_or_primary_process:
             self.logger.info('Num base params [%d]' % (self.x_dim))
             self.logger.info('Num derived params [%d]' % (self.num_derived))
             self.logger.info('Total params [%d]' % (self.num_params))
