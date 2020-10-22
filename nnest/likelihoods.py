@@ -76,8 +76,9 @@ class Himmelblau(Likelihood):
 
 class Gaussian(Likelihood):
 
-    def __init__(self, x_dim, corr):
+    def __init__(self, x_dim, corr, lim=5):
         self.corr = corr
+        self.lim = lim
         super(Gaussian, self).__init__(x_dim)
 
     def loglike(self, x):
@@ -90,7 +91,7 @@ class Gaussian(Likelihood):
 
     @property
     def sample_range(self):
-        return [-5] * self.x_dim, [5] * self.x_dim
+        return [-self.lim] * self.x_dim, [self.lim] * self.x_dim
 
 
 class Eggbox(Likelihood):

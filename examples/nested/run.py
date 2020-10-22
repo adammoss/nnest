@@ -27,7 +27,7 @@ def main(args):
         like = Rosenbrock(args.x_dim)
         transform = lambda x: 5*x
     elif args.likelihood.lower() == 'gaussian':
-        like = Gaussian(args.x_dim, args.corr)
+        like = Gaussian(args.x_dim, args.corr, lim=3)
         transform = lambda x: 3 * x
     elif args.likelihood.lower() == 'eggbox':
         like = Eggbox(args.x_dim)
