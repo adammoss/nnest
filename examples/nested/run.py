@@ -49,7 +49,7 @@ def main(args):
                             num_layers=args.num_layers, num_blocks=args.num_blocks, num_slow=args.num_slow,
                             use_gpu=args.use_gpu, base_dist=base_dist, scale=args.scale, flow=args.flow)
     sampler.run(train_iters=args.train_iters, mcmc_steps=args.mcmc_steps, volume_switch=args.switch,
-                jitter=args.jitter)
+                jitter=args.jitter, mcmc_num_chains=args.mcmc_num_chains)
 
 
 if __name__ == '__main__':
@@ -60,6 +60,7 @@ if __name__ == '__main__':
     parser.add_argument('--train_iters', type=int, default=2000,
                         help="number of train iters")
     parser.add_argument("--mcmc_steps", type=int, default=0)
+    parser.add_argument("--mcmc_num_chains", type=int, default=10)
     parser.add_argument("--num_live_points", type=int, default=1000)
     parser.add_argument('--switch', type=float, default=-1)
     parser.add_argument('--hidden_dim', type=int, default=16)
