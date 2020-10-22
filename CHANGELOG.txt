@@ -6,8 +6,9 @@ Changelog
 
 * Choleksy flows
 * More likelihood examples
-* Added tests
-* Ensemble sampler
+* Added normalising flow tests
+* Ensemble sampler (WIP)
+* Fix: MPI with nested sampling
 
 0.3.1 (21.5.2020)
 ~~~~~~~~~~~~~~~~~~
