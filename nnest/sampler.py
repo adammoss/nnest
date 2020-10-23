@@ -49,6 +49,7 @@ class Sampler(object):
                  trainer=None,
                  transform_prior=True,
                  log_level=logging.INFO,
+                 param_names=None,
                  ):
 
         self.x_dim = x_dim
@@ -58,6 +59,10 @@ class Sampler(object):
         assert x_dim > num_slow
         self.num_slow = num_slow
         self.num_fast = x_dim - num_slow
+
+        self.param_names = param_names
+        if self.param_names is not None:
+            assert len(param_names) == self.num_params
 
         if transform is None:
             self.transform = lambda x: x
@@ -443,6 +448,10 @@ class Sampler(object):
         if len(samples.shape) == 2:
             # Single chain
             with open(os.path.join(self.logs['chains'], outfile + '.txt'), 'w') as f:
+                if self.param_names is not None:
+                    f.write("#weight minusloglike ")
+                    f.write(" ".join(self.param_names))
+                    f.write("\n")
                 for i in range(samples.shape[0]):
                     f.write("%.5E " % max(weights[i], min_weight))
                     f.write("%.5E " % -loglikes[i])
@@ -455,6 +464,10 @@ class Sampler(object):
             # Multiple chains
             for ib in range(samples.shape[0]):
                 with open(os.path.join(self.logs['chains'], outfile + '_%s.txt' % (ib + 1)), 'w') as f:
+                    if self.param_names is not None:
+                        f.write("#weight minusloglike ")
+                        f.write(" ".join(self.param_names))
+                        f.write("\n")
                     for i in range(samples.shape[1]):
                         f.write("%.5E " % max(weights[ib, i], min_weight))
                         f.write("%.5E " % -loglikes[ib, i])

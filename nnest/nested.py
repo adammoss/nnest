@@ -43,6 +43,7 @@ class NestedSampler(Sampler):
                  use_gpu=False,
                  trainer=None,
                  log_level=logging.INFO,
+                 param_names=None,
                  num_live_points=1000):
         """
 
@@ -77,7 +78,8 @@ class NestedSampler(Sampler):
                                             num_layers=num_layers, learning_rate=learning_rate,
                                             log_dir=log_dir, resume=resume,
                                             use_gpu=use_gpu, base_dist=base_dist, scale=scale, trainer=trainer,
-                                            prior=prior, transform_prior=False, log_level=log_level)
+                                            prior=prior, transform_prior=False, log_level=log_level,
+                                            param_names=param_names)
 
         self.num_live_points = num_live_points
         self.sampler = 'nested'
