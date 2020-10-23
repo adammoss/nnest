@@ -432,7 +432,7 @@ class NestedSampler(Sampler):
 
             self.samples = np.array(saved_v)
             self.weights = np.exp(np.array(saved_logwt) - logz)
-            self.loglikes = -np.array(saved_logl)
+            self.loglikes = np.array(saved_logl)
 
             if it > 0 and it % log_interval == 0 and self.single_or_primary_process:
                 np.save(os.path.join(self.logs['checkpoint'], 'active_u_%s.npy' % it), active_u)
