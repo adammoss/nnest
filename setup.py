@@ -12,7 +12,7 @@ def readfile(filename):
 
 setup(
     name="nnest",
-    version="0.3.1",
+    version="0.4.0",
     description="Neural network nested sampling",
     author="Adam Moss",
     author_email="adam.moss@nottingham.ac.uk",
