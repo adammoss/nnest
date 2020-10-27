@@ -22,7 +22,7 @@ except:
 
 from nnest.trainer import Trainer
 from nnest.utils.evaluation import acceptance_rate, effective_sample_size, mean_jump_distance, gelman_rubin_diagnostic
-from nnest.utils.logger import create_logger, make_run_dir
+from nnest.utils.logger import create_logger, get_or_create_run_dir
 
 
 class Sampler(object):
@@ -51,6 +51,32 @@ class Sampler(object):
                  log_level=logging.INFO,
                  param_names=None,
                  ):
+
+        """
+        Args:
+            x_dim:
+            loglike:
+            transform:
+            prior:
+            append_run_num:
+            hidden_dim:
+            num_slow:
+            num_derived:
+            batch_size:
+            flow:
+            num_blocks:
+            num_layers:
+            learning_rate:
+            log_dir:
+            resume:
+            use_gpu:
+            base_dist:
+            scale:
+            trainer:
+            transform_prior:
+            log_level:
+            param_names:
+        """
 
         self.x_dim = x_dim
         self.num_derived = num_derived
@@ -141,12 +167,15 @@ class Sampler(object):
         args = locals()
         args.update(vars(self))
 
-        if self.single_or_primary_process:
-            self.logs = make_run_dir(log_dir, append_run_num=append_run_num)
+        if self.single_or_primary_process or os.path.isdir(os.path.join(log_dir, 'info')):
+            self.logs = get_or_create_run_dir(log_dir, append_run_num=append_run_num)
             self.log_dir = self.logs['run_dir']
-            self._save_params(args)
         else:
+            self.logs = None
             self.log_dir = None
+
+        if self.single_or_primary_process:
+            self._save_params(args)
 
         self.resume = resume
 

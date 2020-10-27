@@ -67,6 +67,7 @@ class NestedSampler(Sampler):
             use_gpu:
             trainer:
             log_level:
+            param_names:
             num_live_points:
         """
 
@@ -160,7 +161,7 @@ class NestedSampler(Sampler):
             self.logger.info('Volume switch [%5.4f]' % volume_switch)
 
         it = 0
-        if self.single_or_primary_process and self.resume and not self.logs['created']:
+        if self.resume and self.logs is not None and not self.logs['created']:
             for f in glob.glob(os.path.join(self.logs['checkpoint'], 'checkpoint_*.txt')):
                 if int(f.split('/checkpoint_')[1].split('.txt')[0]) > it:
                     it = int(f.split('/checkpoint_')[1].split('.txt')[0])
@@ -175,7 +176,8 @@ class NestedSampler(Sampler):
                 logz = data['logz']
                 h = data['h']
                 logvol = data['logvol']
-                self.total_calls = data['ncall']
+                # Total calls in checkpoint is sum of all MPI processes so assume these are split evenly
+                self.total_calls = int(data['ncall'] / self.mpi_size)
                 fraction_remain = data['fraction_remain']
                 strategy = data['strategy']
 

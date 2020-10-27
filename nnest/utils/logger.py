@@ -35,11 +35,11 @@ def ensure_directory(path):
             raise
 
 
-def make_run_dir(run_dir, append_run_num=True):
+def get_or_create_run_dir(run_dir, append_run_num=True):
     """Generates a new numbered directory for this run to store output"""
 
     if os.path.isdir(os.path.join(run_dir, 'info')):
-        print('Resuming old run %s' % run_dir)
+        print('Using old directory %s' % run_dir)
         created = False
     else:
         created = True
