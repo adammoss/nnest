@@ -69,10 +69,9 @@ class MCMCSampler(EnsembleSampler):
                                           num_blocks=num_blocks, num_layers=num_layers, learning_rate=learning_rate,
                                           log_dir=log_dir, use_gpu=use_gpu, base_dist=base_dist, scale=scale,
                                           trainer=trainer, prior=prior, transform_prior=transform_prior,
-                                          log_level=log_level)
+                                          log_level=log_level, oversample_rate=oversample_rate)
 
         self.sampler = 'mcmc'
-        self.oversample_rate = oversample_rate if oversample_rate > 0 else self.num_fast / self.x_dim
 
     def run(
             self,

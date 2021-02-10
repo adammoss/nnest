@@ -48,6 +48,7 @@ class Sampler(object):
                  scale='',
                  trainer=None,
                  transform_prior=True,
+                 oversample_rate=-1,
                  log_level=logging.INFO,
                  param_names=None,
                  ):
@@ -89,6 +90,8 @@ class Sampler(object):
         self.param_names = param_names
         if self.param_names is not None:
             assert len(param_names) == self.num_params
+
+        self.oversample_rate = oversample_rate if oversample_rate > 0 else self.num_fast / self.x_dim
 
         if transform is None:
             self.transform = lambda x: x
