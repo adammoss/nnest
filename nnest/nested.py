@@ -452,7 +452,7 @@ class NestedSampler(Sampler):
                 with open(os.path.join(self.logs['checkpoint'], 'checkpoint_%s.txt' % it), 'w') as f:
                     json.dump({'logz': logz, 'h': h, 'logvol': logvol, 'ncall': total_calls,
                                'fraction_remain': fraction_remain, 'strategy': strategy,
-                               'expired_strategies ': expired_strategies}, f)
+                               'expired_strategies': expired_strategies}, f)
                 self._save_samples(self.samples, self.loglikes, weights=self.weights)
 
             # Stopping criterion
