@@ -182,6 +182,7 @@ class NestedSampler(Sampler):
                 self.total_calls = int(data['ncall'] / self.mpi_size)
                 fraction_remain = data['fraction_remain']
                 strategy = data['strategy']
+                expired_strategies = data['expired_strategies']
 
             active_u = np.load(os.path.join(self.logs['checkpoint'], 'active_u_%s.npy' % it))
             active_v = self.transform(active_u)
@@ -447,7 +448,8 @@ class NestedSampler(Sampler):
                 np.save(os.path.join(self.logs['checkpoint'], 'saved_logwt.npy'), saved_logwt)
                 with open(os.path.join(self.logs['checkpoint'], 'checkpoint_%s.txt' % it), 'w') as f:
                     json.dump({'logz': logz, 'h': h, 'logvol': logvol, 'ncall': total_calls,
-                               'fraction_remain': fraction_remain, 'strategy': strategy}, f)
+                               'fraction_remain': fraction_remain, 'strategy': strategy,
+                               'expired_strategies ': expired_strategies}, f)
                 self._save_samples(self.samples, self.loglikes, weights=self.weights)
 
             # Stopping criterion

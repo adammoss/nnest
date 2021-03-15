@@ -463,7 +463,8 @@ class Sampler(object):
             std = np.std(np.reshape(samples, (-1, samples.shape[2])), axis=0)
         ess = effective_sample_size(samples, mean, std)
         jump_distance = mean_jump_distance(samples)
-        grd = gelman_rubin_diagnostic(samples)
+        if samples.shape[0] > 1:
+            grd = gelman_rubin_diagnostic(samples)
         if step is None:
             self.logger.info(
                 'Acceptance [%5.4f] min ESS [%5.4f] max ESS [%5.4f] average jump [%5.4f]' %
