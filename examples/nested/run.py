@@ -1,6 +1,8 @@
 import os
 import sys
 import argparse
+import time
+import datetime
 
 import numpy as np
 import torch
@@ -48,8 +50,12 @@ def main(args):
                             num_live_points=args.num_live_points, hidden_dim=args.hidden_dim,
                             num_layers=args.num_layers, num_blocks=args.num_blocks, num_slow=args.num_slow,
                             use_gpu=args.use_gpu, base_dist=base_dist, scale=args.scale, flow=args.flow)
+    start_time = time.time()
     sampler.run(train_iters=args.train_iters, mcmc_steps=args.mcmc_steps, volume_switch=args.switch,
-                jitter=args.jitter, mcmc_num_chains=args.mcmc_num_chains)
+                jitter=args.jitter, mcmc_num_chains=args.mcmc_num_chains,
+                mcmc_dynamic_step_size=not args.mcmc_fixed_step_size)
+    end_time = time.time()
+    print('Run time %s' % datetime.timedelta(seconds=end_time - start_time))
 
 
 if __name__ == '__main__':
@@ -59,9 +65,10 @@ if __name__ == '__main__':
                         help="Dimensionality")
     parser.add_argument('--train_iters', type=int, default=2000,
                         help="number of train iters")
-    parser.add_argument("--mcmc_steps", type=int, default=0)
-    parser.add_argument("--mcmc_num_chains", type=int, default=10)
-    parser.add_argument("--num_live_points", type=int, default=1000)
+    parser.add_argument('--mcmc_steps', type=int, default=0)
+    parser.add_argument('--mcmc_num_chains', type=int, default=10)
+    parser.add_argument('--num_live_points', type=int, default=1000)
+    parser.add_argument('-mcmc_fixed_step_size', action='store_true')
     parser.add_argument('--switch', type=float, default=-1)
     parser.add_argument('--hidden_dim', type=int, default=16)
     parser.add_argument('--num_layers', type=int, default=1)

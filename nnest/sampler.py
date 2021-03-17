@@ -293,7 +293,7 @@ class Sampler(object):
                 z_prime = z
 
                 # Find a move that satisfies prior and Jacobian
-                for i in range(5):
+                for i in range(10):
 
                     # Propose a move in latent space
                     dz = torch.randn_like(z) * scale
