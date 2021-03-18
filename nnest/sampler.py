@@ -10,6 +10,7 @@ from __future__ import division
 import os
 import json
 import logging
+import time
 
 import torch
 import numpy as np
@@ -231,7 +232,8 @@ class Sampler(object):
             max_start_tries=100,
             output_interval=None,
             stats_interval=None,
-            plot_trace=True):
+            plot_trace=True,
+            prior_volume_steps=1):
 
         self.trainer.netG.eval()
 
@@ -288,12 +290,13 @@ class Sampler(object):
 
             if loglstar is not None:
 
-                # Sampling from a hard likelihood constraint
+                # Sampling from a hard likelihood constraint logl > loglstar
                 x_prime = x
                 z_prime = z
+                mask_prior_volume = torch.zeros(num_chains)
 
                 # Find a move that satisfies prior and Jacobian
-                for i in range(10):
+                for i in range(prior_volume_steps):
 
                     # Propose a move in latent space
                     dz = torch.randn_like(z) * scale
@@ -329,6 +332,10 @@ class Sampler(object):
                     m = mask[:, None].float()
                     z_prime = (z_propose * m + z_prime * (1 - m)).detach()
                     x_prime = x_propose * m.cpu().numpy() + x_prime * (1 - m.cpu().numpy())
+                    mask_prior_volume += mask
+
+                mask = mask_prior_volume
+                mask[mask > 1] = 1
 
                 self.logger.debug('z_prime={}'.format(z_prime))
                 self.logger.debug('x_prime={}'.format(x_prime))
@@ -339,17 +346,17 @@ class Sampler(object):
                 derived_prime = np.copy(derived)
                 # Only evaluate likelihood if prior and Jacobian is accepted
                 logl_prime = np.full(num_chains, logl)
-                for idx, im in enumerate(mask):
-                    if im:
-                        if fast:
-                            self.total_fast_calls += 1
-                        ncall += 1
-                        lp, der = self.loglike(x_prime[idx])
-                        if np.isfinite(lp) and lp >= loglstar:
-                            logl_prime[idx] = lp
-                            derived_prime[idx] = der
-                        else:
-                            mask[idx] = 0
+
+                mask_idx = np.where(mask.cpu().numpy() == 1)[0]
+                lp, der = self.loglike(x_prime[mask_idx])
+                accept_idx = np.where((np.isfinite(lp)) & (lp > loglstar))[0]
+                non_accept_idx = np.where(np.logical_not((np.isfinite(lp)) & (lp > loglstar)))[0]
+                ncall += len(mask_idx)
+                if fast:
+                    self.total_fast_calls += len(mask_idx)
+                logl_prime[mask_idx[accept_idx]] = lp[accept_idx]
+                derived_prime[mask_idx[accept_idx]] = der[accept_idx]
+                mask[mask_idx[non_accept_idx]] = 0
 
                 self.logger.debug('Post-likelihood mask={}'.format(mask))
 
