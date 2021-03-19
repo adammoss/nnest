@@ -140,7 +140,7 @@ class NestedSampler(Sampler):
         current_method = ''
 
         if update_interval is None:
-            update_interval = max(1, round(self.num_live_points))
+            update_interval = max(1, round(0.5 * self.num_live_points))
         else:
             update_interval = round(update_interval)
             if update_interval < 1:
