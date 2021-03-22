@@ -454,6 +454,7 @@ class NestedSampler(Sampler):
 
             if it_actual > 0 and it_actual % log_interval == 0 and self.single_or_primary_process:
                 np.save(os.path.join(self.logs['checkpoint'], 'active_u_%s.npy' % it_actual), active_u)
+                np.save(os.path.join(self.logs['checkpoint'], 'active_v_%s.npy' % it_actual), active_v)
                 np.save(os.path.join(self.logs['checkpoint'], 'active_logl_%s.npy' % it_actual), active_logl)
                 np.save(os.path.join(self.logs['checkpoint'], 'active_derived_%s.npy' % it_actual), active_derived)
                 np.save(os.path.join(self.logs['checkpoint'], 'saved_v.npy'), saved_v)
