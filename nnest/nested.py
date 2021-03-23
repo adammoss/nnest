@@ -164,13 +164,13 @@ class NestedSampler(Sampler):
             self.logger.info('Initial scale [%5.4f]' % step_size)
             self.logger.info('Volume switch [%5.4f]' % volume_switch)
 
-        it = 0
+        it = -1
         if self.resume and self.logs is not None and not self.logs['created']:
             for f in glob.glob(os.path.join(self.logs['checkpoint'], 'checkpoint_*.txt')):
                 if int(f.split('/checkpoint_')[1].split('.txt')[0]) > it:
                     it = int(f.split('/checkpoint_')[1].split('.txt')[0])
 
-        if it > 0:
+        if it >= 0:
 
             if self.single_or_primary_process:
                 self.logger.info('Using checkpoint [%d]' % it)
@@ -196,6 +196,7 @@ class NestedSampler(Sampler):
             
             # The next step now needs incrementing so isn't done again
             it += 1
+            it_actual = it
 
         else:
 
@@ -247,11 +248,26 @@ class NestedSampler(Sampler):
             logvol = np.log(1.0 - np.exp(-1.0 / self.num_live_points))
             fraction_remain = 1.0
 
+            it = 0
+            it_actual = it
+
+            if self.single_or_primary_process:
+                np.save(os.path.join(self.logs['checkpoint'], 'active_u_%s.npy' % it_actual), active_u)
+                np.save(os.path.join(self.logs['checkpoint'], 'active_v_%s.npy' % it_actual), active_v)
+                np.save(os.path.join(self.logs['checkpoint'], 'active_logl_%s.npy' % it_actual), active_logl)
+                np.save(os.path.join(self.logs['checkpoint'], 'active_derived_%s.npy' % it_actual), active_derived)
+                np.save(os.path.join(self.logs['checkpoint'], 'saved_v.npy'), saved_v)
+                np.save(os.path.join(self.logs['checkpoint'], 'saved_logl.npy'), saved_logl)
+                np.save(os.path.join(self.logs['checkpoint'], 'saved_logwt.npy'), saved_logwt)
+                with open(os.path.join(self.logs['checkpoint'], 'checkpoint_%s.txt' % it_actual), 'w') as f:
+                    json.dump({'logz': logz, 'h': h, 'logvol': logvol, 'ncall': total_calls,
+                               'fraction_remain': fraction_remain, 'strategy': strategy,
+                               'expired_strategies': expired_strategies}, f)
+
         first_time = True
         get_samples = True
         nb = 0
         ncs = []
-        it_actual = it
 
         for it in range(it, max_iters):
 
