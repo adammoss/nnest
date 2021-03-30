@@ -517,16 +517,20 @@ class Sampler(object):
                             f.write(" ".join(["%.5E" % v for v in derived_samples[ib, i, :]]))
                         f.write("\n")
 
-    def _rejection_prior_sample(self, loglstar):
+    def _rejection_prior_sample(self, loglstar, num_trials=None):
 
-        ncall = 0
-        while True:
-            x = self.sample_prior(1)
+        if num_trials is None:
+            ncall = 0
+            while True:
+                x = self.sample_prior(1)
+                logl, derived = self.loglike(x)
+                ncall += 1
+                if logl > loglstar:
+                    break
+        else:
+            x = self.sample_prior(num_trials)
             logl, derived = self.loglike(x)
-            ncall += 1
-            if logl > loglstar:
-                break
-
+            ncall = num_trials / np.sum(logl > loglstar)
         return x, logl, derived, ncall
 
     def _rejection_flow_sample(

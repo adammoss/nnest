@@ -110,7 +110,8 @@ class NestedSampler(Sampler):
             step_size=0.0,
             jitter=-1.0,
             rejection_cache_interval=10,
-            rejection_enlargement_factor=1.1):
+            rejection_enlargement_factor=1.1,
+            rejection_trials=None):
         """
 
         Args:
@@ -129,7 +130,7 @@ class NestedSampler(Sampler):
             jitter:
             rejection_cache_interval:
             rejection_enlargement_factor:
-
+            rejection_trials:
         Returns:
 
         """
@@ -197,7 +198,6 @@ class NestedSampler(Sampler):
             
             # The next step now needs incrementing so isn't done again
             it += 1
-            it_actual = it
 
         else:
 
@@ -250,17 +250,16 @@ class NestedSampler(Sampler):
             fraction_remain = 1.0
 
             it = 0
-            it_actual = it
 
             if self.single_or_primary_process:
-                np.save(os.path.join(self.logs['checkpoint'], 'active_u_%s.npy' % it_actual), active_u)
-                np.save(os.path.join(self.logs['checkpoint'], 'active_v_%s.npy' % it_actual), active_v)
-                np.save(os.path.join(self.logs['checkpoint'], 'active_logl_%s.npy' % it_actual), active_logl)
-                np.save(os.path.join(self.logs['checkpoint'], 'active_derived_%s.npy' % it_actual), active_derived)
+                np.save(os.path.join(self.logs['checkpoint'], 'active_u_%s.npy' % it), active_u)
+                np.save(os.path.join(self.logs['checkpoint'], 'active_v_%s.npy' % it), active_v)
+                np.save(os.path.join(self.logs['checkpoint'], 'active_logl_%s.npy' % it), active_logl)
+                np.save(os.path.join(self.logs['checkpoint'], 'active_derived_%s.npy' % it), active_derived)
                 np.save(os.path.join(self.logs['checkpoint'], 'saved_v.npy'), saved_v)
                 np.save(os.path.join(self.logs['checkpoint'], 'saved_logl.npy'), saved_logl)
                 np.save(os.path.join(self.logs['checkpoint'], 'saved_logwt.npy'), saved_logwt)
-                with open(os.path.join(self.logs['checkpoint'], 'checkpoint_%s.txt' % it_actual), 'w') as f:
+                with open(os.path.join(self.logs['checkpoint'], 'checkpoint_%s.txt' % it), 'w') as f:
                     json.dump({'logz': logz, 'h': h, 'logvol': logvol, 'ncall': total_calls,
                                'fraction_remain': fraction_remain, 'strategy': strategy,
                                'expired_strategies': expired_strategies}, f)
@@ -270,29 +269,33 @@ class NestedSampler(Sampler):
         nb = 0
         ncs = []
 
-        for it in range(it, max_iters):
+        accept_point = True
+
+        while fraction_remain > dlogz and it <= max_iters:
 
             # Worst object in collection and its weight (= volume * likelihood)
             worst = np.argmin(active_logl)
             logwt = logvol + active_logl[worst]
 
-            # Update evidence Z and information h.
-            logz_new = np.logaddexp(logz, logwt)
-            h = (np.exp(logwt - logz_new) * active_logl[worst] + np.exp(logz - logz_new) * (h + logz) - logz_new)
-            logz = logz_new
-
-            # Add worst object to samples.
-            if self.num_derived > 0:
-                saved_v.append(np.concatenate((active_v[worst], active_derived[worst])))
-            else:
-                saved_v.append(np.array(active_v[worst], copy=True))
-            saved_logwt.append(logwt)
-            saved_logl.append(active_logl[worst])
-
-            expected_vol = np.exp(-it_actual / self.num_live_points)
-
             # The new likelihood constraint is that of the worst object.
             loglstar = active_logl[worst]
+
+            expected_vol = np.exp(-it / self.num_live_points)
+
+            if accept_point:
+                # Update evidence Z and information h.
+                logz_new = np.logaddexp(logz, logwt)
+                h = (np.exp(logwt - logz_new) * active_logl[worst] + np.exp(logz - logz_new) * (h + logz) - logz_new)
+                logz = logz_new
+
+                # Add worst object to samples.
+                if self.num_derived > 0:
+                    saved_v.append(np.concatenate((active_v[worst], active_derived[worst])))
+                else:
+                    saved_v.append(np.array(active_v[worst], copy=True))
+                saved_logwt.append(logwt)
+                saved_logl.append(active_logl[worst])
+                accept_point = False
 
             if self.use_mpi:
                 recv_expired_strategies = self.comm.gather(expired_strategies, root=0)
@@ -310,7 +313,7 @@ class NestedSampler(Sampler):
             def valid_method(method):
                 return method in strategy and method not in expired_strategies
 
-            if not current_method == 'rejection_prior' and (first_time or it_actual % update_interval == 0):
+            if not current_method == 'rejection_prior' and (first_time or it % update_interval == 0):
                 # Train flow
                 self.trainer.train(active_u, max_iters=train_iters, jitter=jitter)
                 first_time = False
@@ -324,7 +327,8 @@ class NestedSampler(Sampler):
                     if current_method == 'rejection_prior':
 
                         # Simple rejection sampling over prior
-                        samples, loglikes, derived_samples, nc = self._rejection_prior_sample(loglstar)
+                        samples, loglikes, derived_samples, nc = self._rejection_prior_sample(
+                            loglstar, num_trials=rejection_trials)
                         ncs.append(nc)
                         mean_calls = np.mean(ncs[-20:]) if len(ncs) > 20 else 0
 
@@ -339,7 +343,7 @@ class NestedSampler(Sampler):
                         # Rejection sampling using flow
                         samples, loglikes, derived_samples, nc = self._rejection_flow_sample(
                             active_u, loglstar, enlargement_factor=rejection_enlargement_factor,
-                            cache=it_actual % rejection_cache_interval == 0 or it_actual % update_interval == 0)
+                            cache=it % rejection_cache_interval == 0 or it % update_interval == 0)
                         ncs.append(nc)
                         mean_calls = np.mean(ncs[-20:]) if len(ncs) > 20 else 0
 
@@ -373,119 +377,116 @@ class NestedSampler(Sampler):
                         loglikes = np.concatenate(recv_loglikes, axis=0)
                         derived_samples = np.concatenate(recv_derived_samples, axis=0)
 
-                nb += 1
-                get_samples = nb == self.mpi_size
-                active_u[worst] = samples[nb - 1, :]
-                active_v[worst] = self.transform(active_u[worst])
-                active_logl[worst] = loglikes[nb - 1]
-                if self.num_derived > 0:
-                    active_derived[worst] = derived_samples[nb - 1, :]
-                # Shrink interval
-                logvol -= 1.0 / self.num_live_points
-                logz_remain = np.max(active_logl) - it_actual / self.num_live_points
-                fraction_remain = np.logaddexp(logz, logz_remain) - logz
-                it_actual += 1
+                for ib in range(nb, samples.shape[0]):
+                    nb += 1
+                    get_samples = nb == samples.shape[0]
+                    if loglikes[ib] > loglstar:
+                        active_u[worst] = samples[nb - 1, :]
+                        active_v[worst] = self.transform(active_u[worst])
+                        active_logl[worst] = loglikes[nb - 1]
+                        if self.num_derived > 0:
+                            active_derived[worst] = derived_samples[nb - 1, :]
+                        accept_point = True
+                        break
 
-                if it_actual > 0 and it_actual % log_interval == 0 and self.single_or_primary_process:
-                    if self.use_mpi:
-                        total_calls = sum(recv_total_calls)
-                    else:
-                        total_calls = self.total_calls
+                if self.use_mpi:
+                    total_calls = sum(recv_total_calls)
+                else:
+                    total_calls = self.total_calls
+
+                if accept_point and it > 0 and (it + 1) % log_interval == 0 and self.single_or_primary_process:
                     self.logger.info(
                         'Step [%d] loglstar [%5.4e] max logl [%5.4e] logz [%5.4e] vol [%6.5e] ncalls [%d] mean '
-                        'calls [%5.4f]' % (it_actual, loglstar, np.max(active_logl), logz, expected_vol, total_calls,
+                        'calls [%5.4f]' % (it + 1, loglstar, np.max(active_logl), logz, expected_vol, total_calls,
                                            mean_calls))
 
             elif current_method == 'mcmc':
 
                 # MCMC sampling
 
-                accept = False
-                while not accept:
-                    if get_samples:
-                        # Get a new batch of trial points
-                        nb = 0
-                        idx = np.random.randint(low=0, high=self.num_live_points, size=mcmc_num_chains)
-                        init_samples = active_u[idx, :]
-                        init_loglikes = active_logl[idx]
+                if get_samples:
+                    # Get a new batch of trial points
+                    nb = 0
+                    idx = np.random.randint(low=0, high=self.num_live_points, size=mcmc_num_chains)
+                    init_samples = active_u[idx, :]
+                    init_loglikes = active_logl[idx]
+                    if self.num_derived > 0:
+                        init_derived = active_derived[idx, :]
+                    else:
+                        init_derived = np.empty((mcmc_num_chains, 0))
+                    samples, latent_samples, derived_samples, loglikes, scale, nc = self._mcmc_sample(
+                        mcmc_steps + mcmc_burn_in, init_samples=init_samples, init_loglikes=init_loglikes,
+                        init_derived=init_derived, loglstar=loglstar, step_size=step_size,
+                        dynamic_step_size=mcmc_dynamic_step_size)
+                    if self.use_mpi:
+                        recv_samples = self.comm.gather(samples, root=0)
+                        recv_loglikes = self.comm.gather(loglikes, root=0)
+                        recv_derived_samples = self.comm.gather(derived_samples, root=0)
+                        recv_total_calls = self.comm.gather(self.total_calls, root=0)
+                        recv_samples = self.comm.bcast(recv_samples, root=0)
+                        recv_loglikes = self.comm.bcast(recv_loglikes, root=0)
+                        recv_derived_samples = self.comm.bcast(recv_derived_samples, root=0)
+                        recv_total_calls = self.comm.bcast(recv_total_calls, root=0)
+                        samples = np.concatenate(recv_samples, axis=0)
+                        loglikes = np.concatenate(recv_loglikes, axis=0)
+                        derived_samples = np.concatenate(recv_derived_samples, axis=0)
+
+                for ib in range(nb, samples.shape[0]):
+                    nb += 1
+                    get_samples = nb == samples.shape[0]
+                    if np.all(samples[ib, 0, :] != samples[ib, -1, :]) and loglikes[ib, -1] > loglstar:
+                        active_u[worst] = samples[ib, -1, :]
+                        active_v[worst] = self.transform(active_u[worst])
+                        active_logl[worst] = loglikes[ib, -1]
                         if self.num_derived > 0:
-                            init_derived = active_derived[idx, :]
-                        else:
-                            init_derived = np.empty((mcmc_num_chains, 0))
-                        samples, latent_samples, derived_samples, loglikes, scale, nc = self._mcmc_sample(
-                            mcmc_steps + mcmc_burn_in, init_samples=init_samples, init_loglikes=init_loglikes,
-                            init_derived=init_derived, loglstar=loglstar, step_size=step_size,
-                            dynamic_step_size=mcmc_dynamic_step_size)
-                        if self.use_mpi:
-                            recv_samples = self.comm.gather(samples, root=0)
-                            recv_loglikes = self.comm.gather(loglikes, root=0)
-                            recv_derived_samples = self.comm.gather(derived_samples, root=0)
-                            recv_total_calls = self.comm.gather(self.total_calls, root=0)
-                            recv_samples = self.comm.bcast(recv_samples, root=0)
-                            recv_loglikes = self.comm.bcast(recv_loglikes, root=0)
-                            recv_derived_samples = self.comm.bcast(recv_derived_samples, root=0)
-                            recv_total_calls = self.comm.bcast(recv_total_calls, root=0)
-                            samples = np.concatenate(recv_samples, axis=0)
-                            loglikes = np.concatenate(recv_loglikes, axis=0)
-                            derived_samples = np.concatenate(recv_derived_samples, axis=0)
+                            active_derived[worst] = derived_samples[ib, -1, :]
+                        accept_point = True
+                        break
 
-                    for ib in range(nb, self.mpi_size * mcmc_num_chains):
-                        nb += 1
-                        get_samples = nb == self.mpi_size * mcmc_num_chains
-                        if np.all(samples[ib, 0, :] != samples[ib, -1, :]) and loglikes[ib, -1] > loglstar:
-                            active_u[worst] = samples[ib, -1, :]
-                            active_v[worst] = self.transform(active_u[worst])
-                            active_logl[worst] = loglikes[ib, -1]
-                            if self.num_derived > 0:
-                                active_derived[worst] = derived_samples[ib, -1, :]
-                            # Shrink interval
-                            logvol -= 1.0 / self.num_live_points
-                            logz_remain = np.max(active_logl) - it_actual / self.num_live_points
-                            fraction_remain = np.logaddexp(logz, logz_remain) - logz
-                            it_actual += 1
-                            accept = True
-                            break
+                if self.use_mpi:
+                    total_calls = sum(recv_total_calls)
+                else:
+                    total_calls = self.total_calls
 
-                if it_actual > 0 and it_actual % log_interval == 0 and self.single_or_primary_process:
+                if accept_point and it > 0 and it % log_interval == 0 and self.single_or_primary_process:
                     acceptance, ess, jump_distance = self._chain_stats(samples, mean=np.mean(active_u, axis=0),
                                                                        std=np.std(active_u, axis=0))
-                    if self.use_mpi:
-                        total_calls = sum(recv_total_calls)
-                    else:
-                        total_calls = self.total_calls
                     self.logger.info(
                         'Step [%d] loglstar [%5.4e] maxlogl [%5.4e] logz [%5.4e] vol [%6.5e] ncalls [%d] '
-                        'scale [%5.4f]' % (it_actual, loglstar, np.max(active_logl), logz, expected_vol,
+                        'scale [%5.4f]' % (it, loglstar, np.max(active_logl), logz, expected_vol,
                                            total_calls, scale))
                     with open(os.path.join(self.logs['results'], 'results.csv'), 'a') as f:
                         writer = csv.writer(f)
-                        writer.writerow([it_actual, acceptance, np.min(ess), np.max(ess),
+                        writer.writerow([it, acceptance, np.min(ess), np.max(ess),
                                          jump_distance, scale, loglstar, logz, fraction_remain, total_calls])
 
+            if accept_point:
+                # Shrink interval
+                logvol -= 1.0 / self.num_live_points
+                logz_remain = np.max(active_logl) - it / self.num_live_points
+                fraction_remain = np.logaddexp(logz, logz_remain) - logz
+                it += 1
+
             if self.single_or_primary_process:
-                self.trainer.writer.add_scalar('logz', logz, it_actual)
+                self.trainer.writer.add_scalar('logz', logz, it)
 
             self.samples = np.array(saved_v)
             self.weights = np.exp(np.array(saved_logwt) - logz)
             self.loglikes = np.array(saved_logl)
 
-            if it_actual > 0 and it_actual % log_interval == 0 and self.single_or_primary_process:
-                np.save(os.path.join(self.logs['checkpoint'], 'active_u_%s.npy' % it_actual), active_u)
-                np.save(os.path.join(self.logs['checkpoint'], 'active_v_%s.npy' % it_actual), active_v)
-                np.save(os.path.join(self.logs['checkpoint'], 'active_logl_%s.npy' % it_actual), active_logl)
-                np.save(os.path.join(self.logs['checkpoint'], 'active_derived_%s.npy' % it_actual), active_derived)
+            if it > 0 and it % log_interval == 0 and self.single_or_primary_process:
+                np.save(os.path.join(self.logs['checkpoint'], 'active_u_%s.npy' % it), active_u)
+                np.save(os.path.join(self.logs['checkpoint'], 'active_v_%s.npy' % it), active_v)
+                np.save(os.path.join(self.logs['checkpoint'], 'active_logl_%s.npy' % it), active_logl)
+                np.save(os.path.join(self.logs['checkpoint'], 'active_derived_%s.npy' % it), active_derived)
                 np.save(os.path.join(self.logs['checkpoint'], 'saved_v.npy'), saved_v)
                 np.save(os.path.join(self.logs['checkpoint'], 'saved_logl.npy'), saved_logl)
                 np.save(os.path.join(self.logs['checkpoint'], 'saved_logwt.npy'), saved_logwt)
-                with open(os.path.join(self.logs['checkpoint'], 'checkpoint_%s.txt' % it_actual), 'w') as f:
+                with open(os.path.join(self.logs['checkpoint'], 'checkpoint_%s.txt' % it), 'w') as f:
                     json.dump({'logz': logz, 'h': h, 'logvol': logvol, 'ncall': total_calls,
                                'fraction_remain': fraction_remain, 'strategy': strategy,
                                'expired_strategies': expired_strategies}, f)
                 self._save_samples(self.samples, self.loglikes, weights=self.weights)
-
-            # Stopping criterion
-            if fraction_remain < dlogz:
-                break
 
         logvol = -len(saved_v) / self.num_live_points - np.log(self.num_live_points)
         for i in range(self.num_live_points):
@@ -506,8 +507,8 @@ class NestedSampler(Sampler):
             with open(os.path.join(self.logs['results'], 'final.csv'), 'w') as f:
                 writer = csv.writer(f)
                 writer.writerow(['niter', 'ncall', 'logz', 'logzerr', 'h'])
-                writer.writerow([it_actual + 1, total_calls, logz, np.sqrt(h / self.num_live_points), h])
+                writer.writerow([it + 1, total_calls, logz, np.sqrt(h / self.num_live_points), h])
             self._save_samples(self.samples, self.loglikes, weights=self.weights)
             self.logger.info("niter: {:d}\n ncall: {:d}\n nsamples: {:d}\n logz: {:6.3f} +/- {:6.3f}\n h: {:6.3f}"
-                             .format(it_actual + 1, total_calls, len(np.array(saved_v)), logz,
+                             .format(it + 1, total_calls, len(np.array(saved_v)), logz,
                                      np.sqrt(h / self.num_live_points), h))
