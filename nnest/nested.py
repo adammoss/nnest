@@ -195,9 +195,6 @@ class NestedSampler(Sampler):
             saved_logl = np.load(os.path.join(self.logs['checkpoint'], 'saved_logl.npy')).tolist()
             saved_logwt = np.load(os.path.join(self.logs['checkpoint'], 'saved_logwt.npy')).tolist()
             assert it == len(saved_logl)
-            
-            # The next step now needs incrementing so isn't done again
-            it += 1
 
         else:
 
