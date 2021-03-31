@@ -458,32 +458,33 @@ class NestedSampler(Sampler):
                                          jump_distance, scale, loglstar, logz, fraction_remain, total_calls])
 
             if accept_point:
+
                 # Shrink interval
                 logvol -= 1.0 / self.num_live_points
                 logz_remain = np.max(active_logl) - it / self.num_live_points
                 fraction_remain = np.logaddexp(logz, logz_remain) - logz
                 it += 1
 
-            if self.single_or_primary_process:
-                self.trainer.writer.add_scalar('logz', logz, it)
+                if self.single_or_primary_process:
+                    self.trainer.writer.add_scalar('logz', logz, it)
 
-            self.samples = np.array(saved_v)
-            self.weights = np.exp(np.array(saved_logwt) - logz)
-            self.loglikes = np.array(saved_logl)
+                self.samples = np.array(saved_v)
+                self.weights = np.exp(np.array(saved_logwt) - logz)
+                self.loglikes = np.array(saved_logl)
 
-            if it > 0 and it % log_interval == 0 and self.single_or_primary_process:
-                np.save(os.path.join(self.logs['checkpoint'], 'active_u_%s.npy' % it), active_u)
-                np.save(os.path.join(self.logs['checkpoint'], 'active_v_%s.npy' % it), active_v)
-                np.save(os.path.join(self.logs['checkpoint'], 'active_logl_%s.npy' % it), active_logl)
-                np.save(os.path.join(self.logs['checkpoint'], 'active_derived_%s.npy' % it), active_derived)
-                np.save(os.path.join(self.logs['checkpoint'], 'saved_v.npy'), saved_v)
-                np.save(os.path.join(self.logs['checkpoint'], 'saved_logl.npy'), saved_logl)
-                np.save(os.path.join(self.logs['checkpoint'], 'saved_logwt.npy'), saved_logwt)
-                with open(os.path.join(self.logs['checkpoint'], 'checkpoint_%s.txt' % it), 'w') as f:
-                    json.dump({'logz': logz, 'h': h, 'logvol': logvol, 'ncall': total_calls,
-                               'fraction_remain': fraction_remain, 'strategy': strategy,
-                               'expired_strategies': expired_strategies}, f)
-                self._save_samples(self.samples, self.loglikes, weights=self.weights)
+                if it > 0 and it % log_interval == 0 and self.single_or_primary_process:
+                    np.save(os.path.join(self.logs['checkpoint'], 'active_u_%s.npy' % it), active_u)
+                    np.save(os.path.join(self.logs['checkpoint'], 'active_v_%s.npy' % it), active_v)
+                    np.save(os.path.join(self.logs['checkpoint'], 'active_logl_%s.npy' % it), active_logl)
+                    np.save(os.path.join(self.logs['checkpoint'], 'active_derived_%s.npy' % it), active_derived)
+                    np.save(os.path.join(self.logs['checkpoint'], 'saved_v.npy'), saved_v)
+                    np.save(os.path.join(self.logs['checkpoint'], 'saved_logl.npy'), saved_logl)
+                    np.save(os.path.join(self.logs['checkpoint'], 'saved_logwt.npy'), saved_logwt)
+                    with open(os.path.join(self.logs['checkpoint'], 'checkpoint_%s.txt' % it), 'w') as f:
+                        json.dump({'logz': logz, 'h': h, 'logvol': logvol, 'ncall': total_calls,
+                                   'fraction_remain': fraction_remain, 'strategy': strategy,
+                                   'expired_strategies': expired_strategies}, f)
+                    self._save_samples(self.samples, self.loglikes, weights=self.weights)
 
         logvol = -len(saved_v) / self.num_live_points - np.log(self.num_live_points)
         for i in range(self.num_live_points):

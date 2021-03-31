@@ -126,8 +126,10 @@ class Sampler(object):
             if len(logl.shape) == 0:
                 logl = np.expand_dims(logl, 0)
             logl[np.logical_not(np.isfinite(logl))] = -1e100
-            if len(derived.shape) == 1 or derived.shape[1] != self.num_derived:
-                raise ValueError('Is the number of derived parameters correct and derived has the correct shape?')
+            if len(derived.shape) == 1:
+                raise ValueError('Derived should have dimensions (batch size, num derived params)')
+            if derived.shape[1] != self.num_derived:
+                raise ValueError('Is the number of derived parameters correct?')
             return logl, derived
 
         self.loglike = safe_loglike
@@ -348,15 +350,16 @@ class Sampler(object):
                 logl_prime = np.full(num_chains, logl)
 
                 mask_idx = np.where(mask.cpu().numpy() == 1)[0]
-                lp, der = self.loglike(x_prime[mask_idx])
-                accept_idx = np.where((np.isfinite(lp)) & (lp > loglstar))[0]
-                non_accept_idx = np.where(np.logical_not((np.isfinite(lp)) & (lp > loglstar)))[0]
-                ncall += len(mask_idx)
-                if fast:
-                    self.total_fast_calls += len(mask_idx)
-                logl_prime[mask_idx[accept_idx]] = lp[accept_idx]
-                derived_prime[mask_idx[accept_idx]] = der[accept_idx]
-                mask[mask_idx[non_accept_idx]] = 0
+                if len(mask_idx) > 0:
+                    lp, der = self.loglike(x_prime[mask_idx])
+                    accept_idx = np.where((np.isfinite(lp)) & (lp > loglstar))[0]
+                    non_accept_idx = np.where(np.logical_not((np.isfinite(lp)) & (lp > loglstar)))[0]
+                    ncall += len(mask_idx)
+                    if fast:
+                        self.total_fast_calls += len(mask_idx)
+                    logl_prime[mask_idx[accept_idx]] = lp[accept_idx]
+                    derived_prime[mask_idx[accept_idx]] = der[accept_idx]
+                    mask[mask_idx[non_accept_idx]] = 0
 
                 self.logger.debug('Post-likelihood mask={}'.format(mask))
 
