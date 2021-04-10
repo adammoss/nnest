@@ -21,6 +21,7 @@ class EnsembleSampler(Sampler):
     def __init__(self,
                  x_dim,
                  loglike,
+                 transform=None,
                  prior=None,
                  append_run_num=True,
                  hidden_dim=16,
@@ -37,12 +38,15 @@ class EnsembleSampler(Sampler):
                  use_gpu=False,
                  trainer=None,
                  transform_prior=True,
-                 log_level=logging.INFO):
+                 oversample_rate=-1,
+                 log_level=logging.INFO,
+                 param_names=None):
         """
 
         Args:
             x_dim:
             loglike:
+            transform:
             prior:
             append_run_num:
             hidden_dim:
@@ -59,16 +63,19 @@ class EnsembleSampler(Sampler):
             use_gpu:
             trainer:
             transform_prior:
+            oversample_rate:
+            oversample_rate:
             log_level:
         """
 
-        super(EnsembleSampler, self).__init__(x_dim, loglike, append_run_num=append_run_num,
+        super(EnsembleSampler, self).__init__(x_dim, loglike, transform=transform, append_run_num=append_run_num,
                                               hidden_dim=hidden_dim, num_slow=num_slow,
                                               num_derived=num_derived, batch_size=batch_size, flow=flow,
                                               num_blocks=num_blocks, num_layers=num_layers, learning_rate=learning_rate,
                                               log_dir=log_dir, use_gpu=use_gpu, base_dist=base_dist, scale=scale,
                                               trainer=trainer, prior=prior, transform_prior=transform_prior,
-                                              log_level=log_level)
+                                              log_level=log_level, oversample_rate=oversample_rate,
+                                              param_names=param_names)
 
         self.sampler = 'ensemble'
 

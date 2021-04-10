@@ -141,7 +141,13 @@ class Sampler(object):
             self.sample_prior = None
 
         if prior is None:
-            self.prior = lambda x: 0
+            def safe_prior(x):
+                if isinstance(x, list):
+                    x = np.array(x)
+                if len(x.shape) == 1:
+                    assert x.shape[0] == self.x_dim
+                    x = np.expand_dims(x, 0)
+                return np.array([0 for x in x])
         else:
             def safe_prior(x):
                 if isinstance(x, list):
@@ -154,7 +160,7 @@ class Sampler(object):
                 else:
                     return np.array([prior(x) for x in x])
 
-            self.prior = safe_prior
+        self.prior = safe_prior
 
         self.use_mpi = False
         try:
