@@ -9,6 +9,7 @@ from __future__ import print_function
 from __future__ import division
 
 import logging
+import os
 
 import numpy as np
 from getdist.mcsamples import MCSamples
@@ -82,26 +83,28 @@ class EnsembleSampler(Sampler):
     def bootstrap(
             self,
             num_walkers,
-            bootstrap_mcmc_steps=20,
-            bootstrap_burn_in=20,
-            bootstrap_iters=1,
-            bootstrap_thin=10,
+            mcmc_steps=20,
+            burn_in=20,
+            iters=1,
+            thin=10,
             stats_interval=10,
             output_interval=None,
             initial_jitter=0.01,
-            final_jitter=0.01):
+            final_jitter=0.01,
+            init_samples=None):
         """
 
         Args:
             num_walkers:
-            bootstrap_mcmc_steps:
-            bootstrap_burn_in:
-            bootstrap_iters:
-            bootstrap_thin:
+            mcmc_steps:
+            burn_in:
+            iters:
+            thin:
             stats_interval:
             output_interval:
             initial_jitter:
             final_jitter:
+            init_samples:
 
         Returns:
 
@@ -111,16 +114,20 @@ class EnsembleSampler(Sampler):
             logl, der = self.loglike(x)
             return logl + self.prior(x), der
 
-        if self.sample_prior is not None:
-            x_current = self.sample_prior(num_walkers)
-        else:
-            raise ValueError('Prior does not have sample method')
+        if init_samples is None:
+            if self.sample_prior is not None:
+                init_samples = self.sample_prior(num_walkers)
+            else:
+                raise ValueError('Prior does not have sample method')
         try:
             import emcee
         except:
             raise ImportError
-        sampler = emcee.EnsembleSampler(num_walkers, self.x_dim, log_prob, moves=[(emcee.moves.KDEMove(), 1.0)])
-        state = sampler.run_mcmc(x_current, bootstrap_burn_in)
+
+        self.logger.info('Performing initial emcee run with [%d] walkers' % (num_walkers))
+        sampler = emcee.EnsembleSampler(num_walkers, self.x_dim, log_prob,
+                                        backend=emcee.backends.HDFBackend(os.path.join(self.log_dir, 'emcee.h5')))
+        state = sampler.run_mcmc(init_samples, burn_in + mcmc_steps)
         self.logger.info('Initial acceptance [%5.4f]' % (np.mean(sampler.acceptance_fraction)))
         self._chain_stats(np.transpose(sampler.get_chain(), axes=[1, 0, 2]))
 
@@ -136,15 +143,15 @@ class EnsembleSampler(Sampler):
         init_loglikes = None
         init_derived = None
 
-        for it in range(1, bootstrap_iters + 1):
+        for it in range(1, iters + 1):
 
-            if bootstrap_iters > 1:
-                jitter = initial_jitter + (it - 1) * (final_jitter - initial_jitter) / (bootstrap_iters - 1)
+            if iters > 1:
+                jitter = initial_jitter + (it - 1) * (final_jitter - initial_jitter) / (iters - 1)
             else:
                 jitter = initial_jitter
 
             samples, latent_samples, derived_samples, loglikes, ncall = self._ensemble_sample(
-                bootstrap_burn_in + bootstrap_mcmc_steps, num_walkers, init_samples=init_samples,
+                burn_in + mcmc_steps, num_walkers, init_samples=init_samples,
                 init_loglikes=init_loglikes, init_derived=init_derived, stats_interval=stats_interval,
                 output_interval=None)
 
@@ -156,9 +163,9 @@ class EnsembleSampler(Sampler):
             samples = self.transform(samples)
             self._chain_stats(samples)
 
-            mc = MCSamples(samples=[samples[i, bootstrap_burn_in:, :].squeeze() for i in range(samples.shape[0])],
-                           loglikes=[-loglikes[i, bootstrap_burn_in:].squeeze() for i in range(loglikes.shape[0])])
-            single_samples = mc.makeSingleSamples(single_thin=bootstrap_thin)
+            mc = MCSamples(samples=[samples[i, burn_in:, :].squeeze() for i in range(samples.shape[0])],
+                           loglikes=[-loglikes[i, burn_in:].squeeze() for i in range(loglikes.shape[0])])
+            single_samples = mc.makeSingleSamples(single_thin=thin)
 
             mean = np.mean(single_samples, axis=0)
             std = np.std(single_samples, axis=0)
@@ -173,12 +180,15 @@ class EnsembleSampler(Sampler):
             num_walkers,
             bootstrap_mcmc_steps=20,
             bootstrap_burn_in=20,
-            bootstrap_iters=1,
+            bootstrap_iters=0,
             bootstrap_thin=10,
+            bootstrap_init_samples=None,
             stats_interval=10,
             output_interval=None,
             initial_jitter=0.01,
-            final_jitter=0.01):
+            final_jitter=0.01,
+            training_samples=None,
+            init_samples=None):
         """
 
         Args:
@@ -188,20 +198,32 @@ class EnsembleSampler(Sampler):
             bootstrap_burn_in:
             bootstrap_iters:
             bootstrap_thin:
+            bootstrap_init_samples:
             stats_interval:
             output_interval:
             initial_jitter:
             final_jitter:
+            training_samples:
+            init_samples:
 
         Returns:
 
         """
 
-        self.bootstrap(num_walkers, bootstrap_mcmc_steps=bootstrap_mcmc_steps,
-                       bootstrap_burn_in=bootstrap_burn_in, bootstrap_iters=bootstrap_iters,
-                       bootstrap_thin=bootstrap_thin, stats_interval=stats_interval,
-                       output_interval=output_interval, initial_jitter=initial_jitter,
-                       final_jitter=final_jitter)
+        if training_samples is None:
+            self.bootstrap(num_walkers, mcmc_steps=bootstrap_mcmc_steps,
+                           burn_in=bootstrap_burn_in, iters=bootstrap_iters,
+                           thin=bootstrap_thin, stats_interval=stats_interval,
+                           output_interval=output_interval, initial_jitter=initial_jitter,
+                           final_jitter=final_jitter, init_samples=bootstrap_init_samples)
+        else:
+            if self.transform is None:
+                mean = np.mean(training_samples, axis=0)
+                std = np.std(training_samples, axis=0)
+                # Normalise samples
+                training_samples = (training_samples - mean) / std
+                self.transform = lambda x: x * std + mean
+            self.trainer.train(training_samples, jitter=initial_jitter)
 
         samples, latent_samples, derived_samples, loglikes, ncall = self._ensemble_sample(
             mcmc_steps, num_walkers, stats_interval=stats_interval, output_interval=output_interval)
