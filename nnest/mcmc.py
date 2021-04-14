@@ -20,7 +20,6 @@ class MCMCSampler(EnsembleSampler):
     def __init__(self,
                  x_dim,
                  loglike,
-                 transform=None,
                  prior=None,
                  append_run_num=True,
                  hidden_dim=16,
@@ -45,7 +44,6 @@ class MCMCSampler(EnsembleSampler):
         Args:
             x_dim:
             loglike:
-            transform:
             prior:
             append_run_num:
             hidden_dim:
@@ -67,7 +65,7 @@ class MCMCSampler(EnsembleSampler):
             param_names:
         """
 
-        super(MCMCSampler, self).__init__(x_dim, loglike, transform=transform, append_run_num=append_run_num,
+        super(MCMCSampler, self).__init__(x_dim, loglike, append_run_num=append_run_num,
                                           hidden_dim=hidden_dim, num_slow=num_slow,
                                           num_derived=num_derived, batch_size=batch_size, flow=flow,
                                           num_blocks=num_blocks, num_layers=num_layers, learning_rate=learning_rate,
@@ -82,17 +80,12 @@ class MCMCSampler(EnsembleSampler):
             self,
             mcmc_steps,
             mcmc_num_chains,
+            training_samples,
             mcmc_dynamic_step_size=True,
-            bootstrap_num_walkers=100,
-            bootstrap_mcmc_steps=20,
-            bootstrap_burn_in=20,
-            bootstrap_iters=1,
-            bootstrap_thin=10,
             stats_interval=100,
             output_interval=None,
             initial_jitter=0.01,
             final_jitter=0.01,
-            training_samples=None,
             init_samples=None):
         """
 
@@ -100,11 +93,6 @@ class MCMCSampler(EnsembleSampler):
             mcmc_steps:
             mcmc_num_chains:
             mcmc_dynamic_step_size:
-            bootstrap_num_walkers:
-            bootstrap_mcmc_steps:
-            bootstrap_burn_in:
-            bootstrap_iters:
-            bootstrap_thin:
             stats_interval:
             output_interval:
             initial_jitter:
@@ -116,20 +104,12 @@ class MCMCSampler(EnsembleSampler):
 
         """
 
-        if training_samples is None:
-            self.bootstrap(bootstrap_num_walkers, bootstrap_mcmc_steps=bootstrap_mcmc_steps,
-                           bootstrap_burn_in=bootstrap_burn_in, bootstrap_iters=bootstrap_iters,
-                           bootstrap_thin=bootstrap_thin, stats_interval=stats_interval,
-                           output_interval=output_interval, initial_jitter=initial_jitter,
-                           final_jitter=final_jitter)
-        else:
-            if self.transform is None:
-                mean = np.mean(training_samples, axis=0)
-                std = np.std(training_samples, axis=0)
-                # Normalise samples
-                training_samples = (training_samples - mean) / std
-                self.transform = lambda x: x * std + mean
-            self.trainer.train(training_samples, jitter=initial_jitter)
+        mean = np.mean(training_samples, axis=0)
+        std = np.std(training_samples, axis=0)
+        # Normalise samples
+        training_samples = (training_samples - mean) / std
+        self.transform = lambda x: x * std + mean
+        self.trainer.train(training_samples, jitter=initial_jitter)
 
         samples, latent_samples, derived_samples, loglikes, scale, ncall = self._mcmc_sample(
             mcmc_steps, num_chains=mcmc_num_chains, stats_interval=stats_interval, output_interval=output_interval,

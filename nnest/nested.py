@@ -98,7 +98,6 @@ class NestedSampler(Sampler):
             self,
             strategy=None,
             mcmc_steps=0,
-            mcmc_burn_in=0,
             mcmc_num_chains=10,
             mcmc_dynamic_step_size=True,
             max_iters=1000000,
@@ -117,7 +116,6 @@ class NestedSampler(Sampler):
         Args:
             strategy:
             mcmc_steps:
-            mcmc_burn_in:
             mcmc_num_chains:
             mcmc_dynamic_step_size:
             max_iters:
@@ -412,7 +410,7 @@ class NestedSampler(Sampler):
                     else:
                         init_derived = np.empty((mcmc_num_chains, 0))
                     samples, latent_samples, derived_samples, loglikes, scale, nc = self._mcmc_sample(
-                        mcmc_steps + mcmc_burn_in, init_samples=init_samples, init_loglikes=init_loglikes,
+                        mcmc_steps, init_samples=init_samples, init_loglikes=init_loglikes,
                         init_derived=init_derived, loglstar=loglstar, step_size=step_size,
                         dynamic_step_size=mcmc_dynamic_step_size)
                     if self.use_mpi:
