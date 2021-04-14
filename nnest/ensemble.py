@@ -95,7 +95,6 @@ class EnsembleSampler(Sampler):
         Args:
             num_walkers:
             mcmc_steps:
-            burn_in:
             iters:
             thin:
             stats_interval:
@@ -149,21 +148,21 @@ class EnsembleSampler(Sampler):
 
         for it in range(1, iters + 1):
 
+            if iters > 1:
+                jitter = initial_jitter + (it - 1) * (final_jitter - initial_jitter) / (iters - 1)
+            else:
+                jitter = initial_jitter
+
             mean = np.mean(training_samples, axis=0)
             std = np.std(training_samples, axis=0)
             # Normalise samples
             training_samples = (training_samples - mean) / std
             self.transform = lambda x: x * std + mean
-            self.trainer.train(training_samples, jitter=initial_jitter)
+            self.trainer.train(training_samples, jitter=jitter)
 
             init_samples = None
             init_loglikes = None
             init_derived = None
-
-            if iters > 1:
-                jitter = initial_jitter + (it - 1) * (final_jitter - initial_jitter) / (iters - 1)
-            else:
-                jitter = initial_jitter
 
             samples, latent_samples, derived_samples, loglikes, ncall = self._ensemble_sample(
                 mcmc_steps, num_walkers, init_samples=init_samples,
