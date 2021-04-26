@@ -112,7 +112,7 @@ class EnsembleSampler(Sampler):
             logl, der = self.loglike(x)
             return logl + self.prior(x), der
 
-        if init_samples is None:
+        if not os.path.isfile(os.path.join(self.log_dir, 'emcee.h5')) and init_samples is None:
             if self.sample_prior is not None:
                 init_samples = self.sample_prior(num_walkers)
             else:
