@@ -11,11 +11,14 @@ import os
 import json
 import logging
 import time
+import random
 
+import numpy
 import torch
 import numpy as np
 from tqdm import tqdm
 import matplotlib.pyplot as plt
+
 try:
     import emcee
 except:
@@ -125,7 +128,7 @@ class Sampler(object):
                 derived = np.array([[] for _ in x])
             if len(logl.shape) == 0:
                 logl = np.expand_dims(logl, 0)
-            logl[np.logical_not(np.isfinite(logl))] = -1e100
+            logl[np.logical_not(np.isfinite(logl))] = -1e9
             if len(derived.shape) == 1:
                 raise ValueError('Derived should have dimensions (batch size, num derived params)')
             if derived.shape[1] != self.num_derived:
@@ -226,6 +229,182 @@ class Sampler(object):
         with open(os.path.join(self.logs['info'], 'params.txt'), 'w') as f:
             json.dump(my_dict, f, indent=4)
 
+    def _slice(self, z, loglstar, v=1.5, w=1.5, enlarge=1.3, unit_dist=True, expansion=0.4):
+
+        # draw one sample by multi-dimensional slicing along a principal direction
+
+        self.trainer.netG.eval()
+
+        dz = np.zeros(self.x_dim)
+        axis = np.random.randint(self.x_dim)
+        dz[axis] = 1
+
+        if unit_dist:
+            v = 1.5 + z[axis]
+            w = 1.5 - z[axis]
+            while v <= 0 or w <= 0:
+                if v <= 0:
+                    v += expansion
+                if w <= 0:
+                    w += expansion
+
+        z1, z2 = z - dz * v, z + dz * w
+        x = self.trainer.get_samples(np.array([z]), to_numpy=True)[0]
+        x1 = self.trainer.get_samples(np.array([z1]), to_numpy=True)[0]
+        x2 = self.trainer.get_samples(np.array([z2]), to_numpy=True)[0]
+        l1, _ = self.loglike(x1)
+        l2, _ = self.loglike(x2)
+
+        in1 = l1 > loglstar
+        in2 = l2 > loglstar
+        calls = 2
+        z_scatters = [z, z1, z2]
+        x_scatters = [x, x1, x2]
+
+        while True:
+
+            if in1:
+                v *= enlarge
+                z1 = z - dz * v
+                x1 = self.trainer.get_samples(np.array([z1]), to_numpy=True)[0]
+                l1, _ = self.loglike(x1)
+                in1 = l1 > loglstar
+                calls += 1
+                z_scatters.append(z1)
+                x_scatters.append(x1)
+            if in2:
+                w *= enlarge
+                z2 = z + dz * w
+                x2 = self.trainer.get_samples(np.array([z2]), to_numpy=True)[0]
+                l2, _ = self.loglike(x2)
+                in2 = l2 > loglstar
+                calls += 1
+                z_scatters.append(z2)
+                x_scatters.append(x2)
+            else:
+                w_prime = np.random.uniform(-v, w)
+                z_prime = z + dz * w_prime
+                x_prime = self.trainer.get_samples(np.array([z_prime]), to_numpy=True)[0]
+                l, derived = self.loglike(x_prime)
+                in_prime = l > loglstar
+                calls += 1
+                z_scatters.append(z_prime)
+                x_scatters.append(x_prime)
+                if not in_prime:
+                    if w_prime > 0:
+                        w = w_prime
+                    else:
+                        v = -w_prime
+                else:
+                    break
+
+        return x_prime, z_prime, derived, l[0], calls, np.array(x_scatters), np.array(z_scatters)
+
+    def _slice_sample(
+            self,
+            slice_steps,
+            step_size=0.5,
+            dynamic_step_size=False,
+            num_chains=10,
+            init_samples=None,
+            init_loglikes=None,
+            init_derived=None,
+            show_progress=False,
+            loglstar=None,
+            max_start_tries=100,
+            output_interval=None,
+            stats_interval=None,
+            plot_trace=True,
+            plot_slice_trace=False,
+            prior_volume_steps=1):
+
+        self.trainer.netG.eval()
+
+        if slice_steps < 1:
+            slice_steps = self.x_dim * 4
+
+        samples = []
+        latent_samples = []
+        derived_samples = []  # figure out what they are
+        loglikes = []
+
+        iters = tqdm(range(1, slice_steps + 1)) if show_progress else range(1, slice_steps + 1)
+        scale = step_size
+        accept = 0
+        reject = 0
+        ncall = 0
+
+        if init_samples is not None:
+
+            # choose num_chains starting points
+            idx = np.random.randint(low=0, high=init_samples.shape[0], size=num_chains)
+            start_samples = init_samples[idx, :]
+            zs, _ = self.trainer.forward(start_samples)
+
+            # Add the inverse version of x rather than init_samples due to numerical precision
+            xs = self.trainer.get_samples(zs, to_numpy=True)
+            if init_loglikes is None or init_derived is None:
+                logl, derived = self.loglike(xs)
+                ncall += num_chains
+            else:
+                logl = init_loglikes[idx]
+                derived = init_derived[idx]
+            logl_prior = self.prior(xs)
+        else:
+            for i in range(max_start_tries):
+                zs = self.trainer.get_prior_samples(num_chains)
+                xs = self.trainer.get_samples(zs, to_numpy=True)
+                logl, derived = self.loglike(xs)
+                ncall += num_chains
+                logl_prior = self.prior(xs)
+                if np.all(logl > -1e30) and np.all(logl_prior) > -1e30:
+                    break
+                if i == max_start_tries - 1:
+                    raise Exception('Could not find starting value')
+
+        samples.append(xs)
+        latent_samples.append(zs.cpu().numpy())
+        derived_samples.append(derived)
+        loglikes.append(logl)
+
+        zs_prime = np.copy(zs)
+
+        for _ in iters:
+            xs, zs, derived, logls = [], [], [], []
+            for z in zs_prime:
+                x_new, z_new, deriv_new, logl_new, calls, x_scatters, z_scatters = self._slice(z, loglstar)
+                xs.append(x_new)
+                zs.append(z_new)
+                derived.append(deriv_new)
+                logls.append(logl_new)
+                ncall += calls
+
+            samples.append(xs)
+            latent_samples.append(zs)
+            derived_samples.append(derived)
+            loglikes.append(logls)
+
+            zs_prime = np.array(zs)
+
+        if plot_slice_trace:
+            if init_samples is None:
+                init_samples = samples[0]
+                init_latent_samples = latent_samples[0]
+            else:
+
+                init_latent_samples, _ = self.trainer.forward(init_samples)
+            self._plot_slice_trace(x_scatters, z_scatters, init_samples, init_latent_samples.numpy())
+
+        samples = np.transpose(np.array(samples), axes=[1, 0, 2])
+        latent_samples = np.transpose(np.array(latent_samples), axes=[1, 0, 2])
+        #derived_samples = np.transpose(np.array(derived_samples), axes=[1, 0, 2])
+        loglikes = np.transpose(np.array(loglikes), axes=[1, 0])
+
+        if plot_trace:
+            self._plot_trace(samples, latent_samples)
+
+        return samples, latent_samples, derived_samples, loglikes, scale, ncall
+
     def _mcmc_sample(
             self,
             mcmc_steps,
@@ -320,7 +499,7 @@ class Sampler(object):
                     try:
                         x_propose, log_det_J_propose = self.trainer.inverse(z_propose)
                     except ValueError:
-                        #self.logger.error('Could not find inverse', z_propose)
+                        # self.logger.error('Could not find inverse', z_propose)
                         continue
                     x_propose = x_propose.cpu().numpy()
                     log_ratio = log_det_J_propose - log_det_J
@@ -388,7 +567,7 @@ class Sampler(object):
                 try:
                     x_prime, log_det_J_prime = self.trainer.inverse(z_prime)
                 except ValueError:
-                    #self.logger.error('Could not find inverse', z_prime)
+                    # self.logger.error('Could not find inverse', z_prime)
                     continue
 
                 x_prime = x_prime.cpu().numpy()
@@ -469,6 +648,63 @@ class Sampler(object):
                 ax[i, 0].plot(samples[0, :, i])
                 ax[i, 1].plot(latent_samples[0, 0:1000, i])
             plt.savefig(os.path.join(self.log_dir, 'plots', 'trace.png'))
+            plt.close()
+
+    def _plot_slice_trace(self, x_scatters, z_scatters, samples, latent_samples, wait_for_user=True):
+        if self.log_dir is not None and self.x_dim == 2:
+            fig, ax = plt.subplots(1, 2)
+
+            ax[0].plot(latent_samples[:, 0], latent_samples[:, 1], 'r.')
+            ax[1].plot(samples[:, 0], samples[:, 1], 'r.')
+
+            ax[0].plot(z_scatters[:, 0], z_scatters[:, 1], 'b.')
+            ax[1].plot(x_scatters[:, 0], x_scatters[:, 1], 'b.')
+
+            bound1, bound2 = z_scatters[1], z_scatters[2]
+            z_dir = np.linspace(bound1, bound2, 100)
+            x_dir = self.trainer.get_samples(z_dir, to_numpy=True)
+            ax[0].plot(z_dir[:, 0], z_dir[:, 1], 'b-', zorder=10)
+            ax[1].plot(x_dir[:, 0], x_dir[:, 1], 'b-', zorder=10)
+
+            pos = 0 if z_scatters[1, 0] == z_scatters[2, 0] else 1
+            end = np.zeros(2)
+            end[pos] = 0.4
+
+            for i in np.linspace(-1, 1, 5):
+                end1 = bound1 + end * i
+                end2 = bound2 + end * i
+                z_dir = np.linspace(end1, end2, 100)
+                x_dir = self.trainer.get_samples(z_dir, to_numpy=True)
+                ax[0].plot(z_dir[:, 0], z_dir[:, 1], 'c-')
+                ax[1].plot(x_dir[:, 0], x_dir[:, 1], 'c-')
+
+            ax[0].plot(z_scatters[0, 0], z_scatters[0, 1], 'md', markersize=11)
+            ax[1].plot(x_scatters[0, 0], x_scatters[0, 1], 'md', markersize=11)
+            ax[0].plot(z_scatters[-1, 0], z_scatters[-1, 1], 'g*', markersize=11)
+            ax[1].plot(x_scatters[-1, 0], x_scatters[-1, 1], 'g*', markersize=11)
+
+            it = range(1, z_scatters.shape[0] + 1)
+            for z, x, i in zip(z_scatters, x_scatters, it):
+                label = i
+                delta = np.array([0.01, 0.01])
+                ax[0].annotate(label, z, xytext=z + delta)
+                ax[1].annotate(label, x, xytext=x + delta)
+
+            ax[0].set_title("Latent space")
+            ax[1].set_title("Real space")
+            plt.suptitle("Slice sampling trajectory")
+
+            import matplotlib.lines as mlines
+            start = mlines.Line2D([], [], color='magenta', marker='d', linestyle='None',
+                                  markersize=10, label='Start')
+            finish = mlines.Line2D([], [], color='green', marker='*', linestyle='None',
+                                   markersize=10, label='Finish')
+            fig.legend(handles=[start, finish], loc="center right")
+            if wait_for_user:
+                import keyboard
+                if keyboard.is_pressed('g'):
+                    plt.show()
+            plt.savefig(os.path.join(self.log_dir, 'plots', 'slice_trace.png'))
             plt.close()
 
     def _chain_stats(self, samples, mean=None, std=None, step=None):
@@ -582,7 +818,7 @@ class Sampler(object):
             try:
                 x, log_det_J = self.trainer.inverse(z)
             except ValueError:
-                #self.logger.error('Could not find inverse', z)
+                # self.logger.error('Could not find inverse', z)
                 continue
 
             x = x.cpu().numpy()
