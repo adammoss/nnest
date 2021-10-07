@@ -59,6 +59,21 @@ class Rosenbrock(Likelihood):
         return [-2] * self.x_dim, [12] * self.x_dim
 
 
+class HardRosen(Likelihood):
+
+    def __init__(self, x_dim, value=50):
+        super(HardRosen, self).__init__(x_dim)
+        self.value = value
+
+    def loglike(self, x):
+        logl = sum(100.0 * (x[1:] - x[:-1] ** 2.0) ** 2.0 + (1 - x[:-1]) ** 2.0)
+        return logl if logl < self.value else -np.inf
+
+    @property
+    def max_loglike(self):
+        return self(np.ones((self.x_dim,)))
+
+
 class Himmelblau(Likelihood):
     x_dim = 2
 
@@ -146,7 +161,7 @@ class DoubleGaussianShell(Likelihood):
 
     @property
     def max_loglike(self):
-        # This is the worst case scenerio of overlapping shells
+        # This is the worst case scenario of overlapping shells
         return self.shell1.max_loglike + self.shell2.max_loglike
 
 

@@ -20,7 +20,6 @@ import numpy as np
 from nnest.sampler import Sampler
 from nnest.priors import UniformPrior
 
-
 class NestedSampler(Sampler):
 
     def __init__(self,
@@ -100,17 +99,20 @@ class NestedSampler(Sampler):
             mcmc_steps=0,
             mcmc_num_chains=10,
             mcmc_dynamic_step_size=True,
+            slice_steps=0,
+            slice_num_chains=10,
             max_iters=1000000,
             update_interval=None,
             log_interval=None,
-            dlogz=0.5,
+            dlogz=0.2,
             train_iters=500,
             volume_switch=-1.0,
             step_size=0.0,
             jitter=-1.0,
             rejection_cache_interval=10,
             rejection_enlargement_factor=1.1,
-            rejection_trials=None):
+            rejection_trials=None,
+            plot_slice_trace=False):
         """
 
         Args:
@@ -118,6 +120,8 @@ class NestedSampler(Sampler):
             mcmc_steps:
             mcmc_num_chains:
             mcmc_dynamic_step_size:
+            slice_steps:
+            slice_num_chains:
             max_iters:
             update_interval:
             log_interval:
@@ -155,6 +159,9 @@ class NestedSampler(Sampler):
         if mcmc_steps <= 0:
             mcmc_steps = 5 * self.x_dim
 
+        if slice_steps <= 0:
+            slice_steps = 5 * self.x_dim
+
         if step_size <= 0.0:
             step_size = 1 / self.x_dim ** 0.5
 
@@ -166,8 +173,8 @@ class NestedSampler(Sampler):
         it = -1
         if self.resume and self.logs is not None and not self.logs['created']:
             for f in glob.glob(os.path.join(self.logs['checkpoint'], 'checkpoint_*.txt')):
-                if int(f.split('/checkpoint_')[1].split('.txt')[0]) > it:
-                    it = int(f.split('/checkpoint_')[1].split('.txt')[0])
+                if int(f.split('checkpoint_')[1].split('.txt')[0]) > it:
+                    it = int(f.split('checkpoint_')[1].split('.txt')[0])
 
         if it >= 0:
 
@@ -263,6 +270,7 @@ class NestedSampler(Sampler):
         get_samples = True
         nb = 0
         ncs = []
+        count = 0
 
         accept_point = True
 
@@ -328,7 +336,8 @@ class NestedSampler(Sampler):
                         mean_calls = np.mean(ncs[-20:]) if len(ncs) > 20 else 0
 
                         if expected_vol < volume_switch >= 0 or \
-                                (volume_switch < 0 and mean_calls > mcmc_steps and valid_method('mcmc')):
+                                (volume_switch < 0 and mean_calls > mcmc_steps and valid_method('mcmc')) or \
+                                (volume_switch < 0 and mean_calls > slice_steps and valid_method('slice')):
                             self.logger.info('Rejection prior no longer efficient, switching sampling method')
                             expired_strategies.append('rejection_prior')
                             ncs = []
@@ -342,7 +351,7 @@ class NestedSampler(Sampler):
                         ncs.append(nc)
                         mean_calls = np.mean(ncs[-20:]) if len(ncs) > 20 else 0
 
-                        if mean_calls > mcmc_steps and valid_method('mcmc'):
+                        if (mean_calls > mcmc_steps and valid_method('mcmc')) or (mean_calls > slice_steps and valid_method('slice')):
                             self.logger.info('Rejection flow no longer efficient, switching sampling method')
                             expired_strategies.append('rejection_flow')
                             ncs = []
@@ -395,6 +404,66 @@ class NestedSampler(Sampler):
                         'calls [%5.4f]' % (it + 1, loglstar, np.max(active_logl), logz, expected_vol, total_calls,
                                            mean_calls))
 
+            elif current_method == 'slice':
+
+                # Slice sampling
+
+                if get_samples:
+                    # Get a new batch of trial points
+                    nb = 0
+
+                    samples, latent_samples, derived_samples, loglikes, scale, nc = \
+                        self._slice_sample(slice_steps=slice_steps,
+                                           num_chains=slice_num_chains,
+                                           init_samples=active_u,
+                                           init_loglikes=active_logl,
+                                           loglstar=loglstar,
+                                           plot_slice_trace=plot_slice_trace)
+                    if self.use_mpi:
+                        recv_samples = self.comm.gather(samples, root=0)
+                        recv_loglikes = self.comm.gather(loglikes, root=0)
+                        recv_derived_samples = self.comm.gather(derived_samples, root=0)
+                        recv_total_calls = self.comm.gather(self.total_calls, root=0)
+                        recv_samples = self.comm.bcast(recv_samples, root=0)
+                        recv_loglikes = self.comm.bcast(recv_loglikes, root=0)
+                        recv_derived_samples = self.comm.bcast(recv_derived_samples, root=0)
+                        recv_total_calls = self.comm.bcast(recv_total_calls, root=0)
+                        samples = np.concatenate(recv_samples, axis=0)
+                        loglikes = np.concatenate(recv_loglikes, axis=0)
+                        derived_samples = np.concatenate(recv_derived_samples, axis=0)
+
+                for ib in range(nb, samples.shape[0]):
+                    nb += 1
+                    get_samples = nb == samples.shape[0]
+                    sample_new = samples[ib, -1, :]
+                    if not np.any(np.abs(sample_new) > 1):
+                        active_u[worst] = sample_new
+                        active_v[worst] = self.transform(active_u[worst])
+                        active_logl[worst] = loglikes[ib, -1]
+                        if self.num_derived > 0:
+                            active_derived[worst] = derived_samples[ib, -1, :]
+                        accept_point = True
+                        break
+                    else:
+                        count += 1
+
+                if self.use_mpi:
+                    total_calls = sum(recv_total_calls)
+                else:
+                    total_calls = self.total_calls
+
+                if accept_point and it > 0 and it % log_interval == 0 and self.single_or_primary_process:
+                    acceptance, ess, jump_distance = self._chain_stats(samples, mean=np.mean(active_u, axis=0),
+                                                                       std=np.std(active_u, axis=0))
+                    self.logger.info(
+                        'Step [%d] loglstar [%5.4e] maxlogl [%5.4e] logz [%5.4e] vol [%6.5e] ncalls [%d] '
+                        'scale [%5.4f]' % (it, loglstar, np.max(active_logl), logz, expected_vol,
+                                           total_calls, scale))
+                    with open(os.path.join(self.logs['results'], 'results.csv'), 'a') as f:
+                        writer = csv.writer(f)
+                        writer.writerow([it, acceptance, np.min(ess), np.max(ess),
+                                         jump_distance, scale, loglstar, logz, fraction_remain, total_calls])
+
             elif current_method == 'mcmc':
 
                 # MCMC sampling
@@ -429,14 +498,18 @@ class NestedSampler(Sampler):
                 for ib in range(nb, samples.shape[0]):
                     nb += 1
                     get_samples = nb == samples.shape[0]
+
                     if np.all(samples[ib, 0, :] != samples[ib, -1, :]) and loglikes[ib, -1] > loglstar:
-                        active_u[worst] = samples[ib, -1, :]
-                        active_v[worst] = self.transform(active_u[worst])
-                        active_logl[worst] = loglikes[ib, -1]
-                        if self.num_derived > 0:
-                            active_derived[worst] = derived_samples[ib, -1, :]
-                        accept_point = True
-                        break
+                        if not np.any(np.abs(samples[ib, -1, :]) > 1):
+                            active_u[worst] = samples[ib, -1, :]
+                            active_v[worst] = self.transform(active_u[worst])
+                            active_logl[worst] = loglikes[ib, -1]
+                            if self.num_derived > 0:
+                                active_derived[worst] = derived_samples[ib, -1, :]
+                            accept_point = True
+                            break
+                        else:
+                            count += 1
 
                 if self.use_mpi:
                     total_calls = sum(recv_total_calls)
@@ -502,8 +575,8 @@ class NestedSampler(Sampler):
         if self.single_or_primary_process:
             with open(os.path.join(self.logs['results'], 'final.csv'), 'w') as f:
                 writer = csv.writer(f)
-                writer.writerow(['niter', 'ncall', 'logz', 'logzerr', 'h'])
-                writer.writerow([it + 1, total_calls, logz, np.sqrt(h / self.num_live_points), h])
+                writer.writerow(['method','dim', 'nlive', 'niter', 'ncall', 'logz', 'logzerr', 'h', 'rejectance rate'])
+                writer.writerow([strategy[-1], self.x_dim, self.num_live_points, it + 1, total_calls, logz, np.sqrt(h / self.num_live_points), h, count/it])
             self._save_samples(self.samples, self.loglikes, weights=self.weights)
             self.logger.info("niter: {:d}\n ncall: {:d}\n nsamples: {:d}\n logz: {:6.3f} +/- {:6.3f}\n h: {:6.3f}"
                              .format(it + 1, total_calls, len(np.array(saved_v)), logz,
