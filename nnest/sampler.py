@@ -10,9 +10,6 @@ from __future__ import division
 import os
 import json
 import logging
-import time
-import random
-
 import numpy
 import torch
 import numpy as np

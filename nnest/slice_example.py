@@ -16,10 +16,9 @@ from likelihoods import *
 from priors import UniformPrior
 from distributions import GeneralisedNormal
 
-repeats = 2
-dims = [2, 4, 5]
-methods = ['slice']
-v_switch = [-1, -1, -1]
+repeats = 1
+dims = [2, 3]
+methods = ['slice', 'mcmc']
 
 pre = Path(os.getcwd())
 post = Path("results/final.csv")
@@ -36,13 +35,15 @@ for _ in range(repeats):
                                     base_dist=base_dist, learning_rate=0.01, log_dir="logs/test")
 
             sampler.run(strategy=['rejection_prior', method],
-                        volume_switch=-1, dlogz=0.001, max_iters=1300*dim,
+                        volume_switch=-1, dlogz=0.01, max_iters=1100*dim,
                         train_iters=1000,
                         plot_slice_trace=True)
 
 
             path_t = pre / sampler.log_dir / post
             fin = pd.read_csv(path_t)
+
+            #save results in the corresponding folder
 
             if isinstance(like, Rosenbrock):
                 fout = pre / "logs/dim_scaling/Rosenbrock.csv"

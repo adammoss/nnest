@@ -19,7 +19,6 @@ import numpy as np
 
 from nnest.sampler import Sampler
 from nnest.priors import UniformPrior
-from nnest.trainer import Trainer
 
 class NestedSampler(Sampler):
 
@@ -319,20 +318,6 @@ class NestedSampler(Sampler):
 
             if not current_method == 'rejection_prior' and (first_time or it % update_interval == 0):
                 # Train flow
-                '''
-                # Reset flow params
-                
-                for layer in self.trainer.netG.flow.flows:
-                    if hasattr(layer, 'translate_net'):
-                        for net in layer.translate_net:
-                            if hasattr(net, 'reset_parameters'):
-                                net.reset_parameters()
-                    if hasattr(layer, 'scale_net'):
-                        for net in layer.scale_net:
-                            if hasattr(net, 'reset_parameters'):
-                                net.reset_parameters()
-                '''
-
                 self.trainer.train(active_u, max_iters=train_iters, jitter=jitter)
                 first_time = False
 
@@ -461,7 +446,6 @@ class NestedSampler(Sampler):
                         break
                     else:
                         count += 1
-                        print("OUT")
 
                 if self.use_mpi:
                     total_calls = sum(recv_total_calls)
@@ -526,7 +510,6 @@ class NestedSampler(Sampler):
                             break
                         else:
                             count += 1
-                            print("OUT")
 
                 if self.use_mpi:
                     total_calls = sum(recv_total_calls)
@@ -598,5 +581,3 @@ class NestedSampler(Sampler):
             self.logger.info("niter: {:d}\n ncall: {:d}\n nsamples: {:d}\n logz: {:6.3f} +/- {:6.3f}\n h: {:6.3f}"
                              .format(it + 1, total_calls, len(np.array(saved_v)), logz,
                                      np.sqrt(h / self.num_live_points), h))
-        print("count is: %d" % count)
-        print("rejectanca rate: %f4.3" % (count / it))
