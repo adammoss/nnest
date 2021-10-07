@@ -11,7 +11,7 @@ from pathlib import Path
 
 sys.path.append(os.getcwd() + "/..")
 
-from nnest.nested import NestedSampler
+from nested import NestedSampler
 from likelihoods import *
 from priors import UniformPrior
 from distributions import GeneralisedNormal
@@ -35,7 +35,7 @@ for _ in range(repeats):
                                     base_dist=base_dist, learning_rate=0.01, log_dir="logs/test")
 
             sampler.run(strategy=['rejection_prior', method],
-                        volume_switch=-1, dlogz=0.01, max_iters=1100*dim,
+                        volume_switch=-1, dlogz=0.01, max_iters=6000*dim,
                         train_iters=1000,
                         plot_slice_trace=True)
 
